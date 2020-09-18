@@ -1,0 +1,35 @@
+{
+  "name": "somehow-scale",
+  "description": "svelte infographic component",
+  "version": "0.1.0",
+  "main": "src/index.mjs",
+  "author": "Spencer Kelly (spencermountain)",
+  "homepage": "https://github.com/spencermountain/",
+  "scripts": {
+    "build": "rollup -c",
+    "start": "rollup -c -w",
+    "watch": "rollup -c -w",
+    "serve": "serve"
+  },
+  "prettier": {
+    "trailingComma": "none",
+    "tabWidth": 2,
+    "semi": false,
+    "singleQuote": true,
+    "printWidth": 100
+  },
+  "dependencies": {
+    "spencer-color": "^0.1.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "15.0.0",
+    "@rollup/plugin-node-resolve": "9.0.0",
+    "rollup": "2.26.10",
+    "rollup-plugin-livereload": "2.0.0",
+    "rollup-plugin-svelte": "6.0.0",
+    "rollup-plugin-terser": "7.0.2",
+    "serve": "^11.3.0",
+    "svelte": "3.24.1"
+  },
+  "licence": "MIT"
+}
