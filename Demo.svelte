@@ -17,8 +17,8 @@
   </div>
   <div class="mt4 container">
     <Scale>
-      <Thing color="blue" value="84" label="some blue" />
-      <Thing color="green" value="10123" label="green and blue and red and yellow label" />
+      <Thing color="blue" value="124" label="some blue" />
+      <Thing color="green" value="10123" label="green label" />
       <Thing color="red" value="2904" label="red guy" />
     </Scale>
   </div>

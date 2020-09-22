@@ -13,7 +13,6 @@
 <style>
   .container {
     height: 100%;
-    font-size: 'Tajawal';
     position: relative;
     width: 100%;
     display: flex;
@@ -21,73 +20,103 @@
     justify-content: space-around;
     align-items: center;
     text-align: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-self: stretch;
   }
 
-  .bar {
-    width: 100px;
-    height: 100px;
-    position: relative;
-    border-radius: 2px;
-    box-shadow: 2px 2px 8px 0px rgba(0, 0, 0, 0.2);
-    align-self: center;
-  }
-  .bar:hover {
-    box-shadow: 2px 2px 8px 0px steelblue;
-  }
   .box {
     position: relative;
     box-sizing: border-box;
-    padding: 2rem;
+    padding: 10px;
     display: flex;
     height: 100%;
     flex: 1;
     flex-direction: column;
-    /* border: 1px solid grey; */
     justify-content: flex-end;
-    align-items: center;
+    align-items: flex-end;
   }
   .label {
     position: relative;
     color: #b3b7ba;
     max-width: 200px;
-    font-size: 12px;
+    font-size: 11px;
+    margin-top: 4px;
+    text-align: right;
+    margin-right: 45px;
   }
   .value {
     position: relative;
     color: #949a9e;
-    font-size: 34px;
+    font-size: 20px;
+    margin: 7px;
+    opacity: 0.8;
+    margin-right: 45px;
     justify-content: center;
     display: flex;
     align-items: first baseline;
   }
-  .line {
-    width: 1px;
-    height: 100%;
-    background-color: #b3b7ba;
-    margin: 7px;
-  }
-  .side {
-    flex: 1;
-    color: #b3b7ba;
-    max-width: 50px;
-    font-size: 12px;
-  }
-  .row {
-    margin-top: 10px;
-    margin-bottom: 10px;
-    display: flex;
-    height: 20px;
-    flex-direction: row;
-    justify-content: center;
-    align-items: center;
-    flex-wrap: nowrap;
+  .num {
+    opacity: 1;
   }
   .unit {
-    font-size: 18px;
+    font-size: 12px;
+    margin-left: 1px;
+    color: #949a9e;
+  }
+  /* .dec {
+    position: relative;
+    font-size: 14px;
+    color: #949a9e;
+    margin-left: 1px;
     color: #b3b7ba;
-    /* color: steelblue; */
+    top: 3px;
+  } */
+  /* the actual bar */
+  .sized {
+    position: relative;
+    width: 100%;
+    align-self: center;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    flex-wrap: nowrap;
+  }
+  .axis {
+    width: 6px;
+    margin-left: 7px;
+    border-left: 1px dashed lightgrey;
+    border-top: 1px dashed lightgrey;
+    border-bottom: 1px dashed lightgrey;
+    height: 100%;
+  }
+  .beside {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-start;
+    position: relative;
+    margin-left: 5px;
+    box-sizing: border-box;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    height: 100%;
+    width: 45px;
+  }
+  .percent {
+    color: #b3b7ba;
+    font-size: 12px;
+    width: 40px;
+  }
+  .bar {
+    min-width: 100px;
+    flex: 1;
+    height: 100%;
+    border-radius: 2px;
+    box-shadow: 2px 2px 8px 0px rgba(0, 0, 0, 0.2);
+  }
+  .bar:hover {
+    box-shadow: 2px 2px 8px 0px steelblue;
   }
 </style>
 
@@ -95,19 +124,22 @@
 
   {#each arr as bar}
     <div class="box">
+      <!-- top number -->
+      <div class="value" style="border-bottom: 2px solid {bar.color};">
+        <span class="num">{bar.fmt[0]}</span>
+        <span class="unit">{bar.fmt[2] || ''}</span>
+      </div>
+      <div class="sized" style="height:{bar.height}%;">
+        <div class="bar" style="background-color:{bar.color}; " />
+        <div class="beside">
+          {#if bar.percentage !== 100}
+            <div class="axis" />
+            <div class="percent">{bar.percentage !== 100 ? bar.percentage + '%' : ''}</div>
+          {/if}
+        </div>
+      </div>
+      <!-- bottom label -->
       <div class="label">{bar.label}</div>
-      <div class="value">
-        <span>{bar.fmt[0]}</span>
-        <span class="unit">{bar.fmt[1]}</span>
-      </div>
-      <div class="row">
-        <div class="side" />
-        <div class="line" />
-        <div class="side">{bar.percentage !== 100 ? bar.percentage + '%' : ''}</div>
-      </div>
-      <div
-        class="bar"
-        style="background-color:{bar.color}; width:{bar.width}%; height:{bar.height}%;" />
     </div>
   {/each}
 
