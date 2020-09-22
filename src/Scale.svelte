@@ -1,9 +1,13 @@
 <script>
-  import { setContext, onMount } from 'svelte'
-  import { things } from './store'
+  import { setContext } from 'svelte'
   import { tweened } from 'svelte/motion'
   import layout from './layout'
   export let height = 400
+
+  import { writable } from 'svelte/store'
+  let things = writable([])
+  setContext('things', things)
+
   $: h = height
   $: arr = layout($things, h)
 </script>
@@ -21,7 +25,6 @@
     flex-wrap: nowrap;
     align-self: stretch;
   }
-
   .box {
     position: relative;
     box-sizing: border-box;
@@ -61,14 +64,6 @@
     margin-left: 1px;
     color: #949a9e;
   }
-  /* .dec {
-    position: relative;
-    font-size: 14px;
-    color: #949a9e;
-    margin-left: 1px;
-    color: #b3b7ba;
-    top: 3px;
-  } */
   /* the actual bar */
   .sized {
     position: relative;
@@ -78,7 +73,6 @@
     flex-direction: row;
     justify-content: flex-end;
     flex-wrap: nowrap;
-    /* border-bottom: 1px dashed lightgrey; */
   }
   .axis {
     width: 6px;
@@ -111,15 +105,13 @@
     color: #fbfbfb;
   }
   .bar {
-    /* min-width: 100px; */
-    /* flex: 1; */
     display: flex;
     box-sizing: border-box;
-    /* padding: 2%; */
     justify-content: flex-end;
     align-items: flex-end;
     border-radius: 2px;
     box-shadow: 2px 2px 8px 0px rgba(0, 0, 0, 0.2);
+    height: 100%;
   }
   .bar:hover {
     box-shadow: 2px 2px 8px 0px steelblue;
@@ -127,8 +119,6 @@
   .ghost {
     height: 100%;
     width: 25%;
-    /* border-radius: 3px; */
-    /* border: 1px dotted lightgrey; */
   }
 </style>
 
@@ -149,13 +139,11 @@
         {/if}
         <div
           class="bar"
-          style="background-color:{bar.color}; width:{bar.width}; max-width:{bar.width};
-          height:100%;">
+          style="background-color:{bar.color}; width:{bar.width}; max-width:{bar.width};">
           {#if bar.rescaled && bar.percentage !== 0}
             <div class="inside">{bar.percentage !== 100 ? bar.percentage + '%' : ''}</div>
           {/if}
         </div>
-
         <div class="beside">
           {#if bar.percentage !== 100 && bar.rescaled !== true}
             <div class="axis" />
@@ -167,6 +155,5 @@
       <div class="label">{bar.label}</div>
     </div>
   {/each}
-
 </div>
 <slot />

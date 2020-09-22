@@ -11,8 +11,8 @@
 </script>
 
 <style>
-  .container {
-    height: 800px;
+  .mt4 {
+    margin-top: 8rem;
   }
 </style>
 
@@ -22,11 +22,20 @@
     a svelte infographic component -
     <a href="https://github.com/spencermountain/somehow-scale" class="m4">github</a>
   </div>
-  <div class="mt4 container">
+  <div class="mt4">
     <Horizontal min={100} max={1700} bind:value={right} />
     <Scale height={val}>
       <Thing color="blue" bind:value={left} label="small blue" />
       <Thing color="green" value={right} label="medium green" />
+    </Scale>
+  </div>
+
+  <div class="mt4">
+    <Horizontal min={100} max={1700} value={80} />
+    <Scale height={val}>
+      <Thing color="red" value={22} label="2nd red" />
+      <Thing color="green" value={38} label="medium green" />
+      <Thing color="mud" value={18} label="mud" />
     </Scale>
   </div>
 </div>

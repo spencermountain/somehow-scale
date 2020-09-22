@@ -176,14 +176,14 @@ var app = (function () {
             throw new Error(`Function called outside component initialization`);
         return current_component;
     }
-    function onMount(fn) {
-        get_current_component().$$.on_mount.push(fn);
-    }
     function afterUpdate(fn) {
         get_current_component().$$.after_update.push(fn);
     }
     function setContext(key, context) {
         get_current_component().$$.context.set(key, context);
+    }
+    function getContext(key) {
+        return get_current_component().$$.context.get(key);
     }
 
     const dirty_components = [];
@@ -532,9 +532,6 @@ var app = (function () {
         return { set, update, subscribe };
     }
 
-    const things = writable([]);
-    // export const h = writable(400)
-
     function is_date(obj) {
         return Object.prototype.toString.call(obj) === '[object Date]';
     }
@@ -634,8 +631,6 @@ var app = (function () {
         };
     }
 
-    // const ratio = 0.61803
-
     const fmt = function (num) {
       const round = (x) => Math.round(x * 10) / 10;
       const decimal = (x) => String(round(x % 1)).replace(/^0/, '');
@@ -665,7 +660,6 @@ var app = (function () {
       arr.forEach((o) => {
         let percentage = (o.value / max) * 100;
         o.height = percentage;
-        // o.width = percentage * ratio
         o.percentage = parseInt(percentage, 10);
         o.height = o.percentage;
         o.width = '100%';
@@ -687,18 +681,18 @@ var app = (function () {
 
     function add_css() {
     	var style = element("style");
-    	style.id = "svelte-19rgbmb-style";
-    	style.textContent = ".container.svelte-19rgbmb{height:100%;position:relative;width:100%;display:flex;flex-direction:row;justify-content:space-around;align-items:center;text-align:center;flex-wrap:nowrap;align-self:stretch}.box.svelte-19rgbmb{position:relative;box-sizing:border-box;padding:10px;display:flex;height:100%;flex:1;flex-direction:column;justify-content:flex-end;align-items:flex-end}.label.svelte-19rgbmb{position:relative;color:#b3b7ba;max-width:200px;font-size:11px;margin-top:4px;text-align:right;margin-right:45px}.value.svelte-19rgbmb{position:relative;color:#949a9e;font-size:20px;margin:7px;opacity:0.8;margin-right:45px;justify-content:center;display:flex;align-items:first baseline}.num.svelte-19rgbmb{opacity:1}.unit.svelte-19rgbmb{font-size:12px;margin-left:1px;color:#949a9e}.sized.svelte-19rgbmb{position:relative;width:100%;align-self:center;display:flex;flex-direction:row;justify-content:flex-end;flex-wrap:nowrap}.axis.svelte-19rgbmb{width:6px;margin-left:7px;border-left:1px dashed lightgrey;border-top:1px dashed lightgrey;border-bottom:1px dashed lightgrey;height:100%}.beside.svelte-19rgbmb{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;position:relative;margin-left:5px;box-sizing:border-box;padding-top:12px;padding-bottom:12px;height:100%;width:45px}.percent.svelte-19rgbmb{color:#b3b7ba;font-size:12px;width:40px}.inside.svelte-19rgbmb{color:#fbfbfb}.bar.svelte-19rgbmb{display:flex;box-sizing:border-box;justify-content:flex-end;align-items:flex-end;border-radius:2px;box-shadow:2px 2px 8px 0px rgba(0, 0, 0, 0.2)}.bar.svelte-19rgbmb:hover{box-shadow:2px 2px 8px 0px steelblue}.ghost.svelte-19rgbmb{height:100%;width:25%}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiU2NhbGUuc3ZlbHRlIiwic291cmNlcyI6WyJTY2FsZS5zdmVsdGUiXSwic291cmNlc0NvbnRlbnQiOlsiPHNjcmlwdD5cbiAgaW1wb3J0IHsgc2V0Q29udGV4dCwgb25Nb3VudCB9IGZyb20gJ3N2ZWx0ZSdcbiAgaW1wb3J0IHsgdGhpbmdzIH0gZnJvbSAnLi9zdG9yZSdcbiAgaW1wb3J0IHsgdHdlZW5lZCB9IGZyb20gJ3N2ZWx0ZS9tb3Rpb24nXG4gIGltcG9ydCBsYXlvdXQgZnJvbSAnLi9sYXlvdXQnXG4gIGV4cG9ydCBsZXQgaGVpZ2h0ID0gNDAwXG4gICQ6IGggPSBoZWlnaHRcbiAgJDogYXJyID0gbGF5b3V0KCR0aGluZ3MsIGgpXG48L3NjcmlwdD5cblxuPHN0eWxlPlxuICAuY29udGFpbmVyIHtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIHdpZHRoOiAxMDAlO1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgZmxleC1kaXJlY3Rpb246IHJvdztcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IHNwYWNlLWFyb3VuZDtcbiAgICBhbGlnbi1pdGVtczogY2VudGVyO1xuICAgIHRleHQtYWxpZ246IGNlbnRlcjtcbiAgICBmbGV4LXdyYXA6IG5vd3JhcDtcbiAgICBhbGlnbi1zZWxmOiBzdHJldGNoO1xuICB9XG5cbiAgLmJveCB7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIGJveC1zaXppbmc6IGJvcmRlci1ib3g7XG4gICAgcGFkZGluZzogMTBweDtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGhlaWdodDogMTAwJTtcbiAgICBmbGV4OiAxO1xuICAgIGZsZXgtZGlyZWN0aW9uOiBjb2x1bW47XG4gICAganVzdGlmeS1jb250ZW50OiBmbGV4LWVuZDtcbiAgICBhbGlnbi1pdGVtczogZmxleC1lbmQ7XG4gIH1cbiAgLmxhYmVsIHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgY29sb3I6ICNiM2I3YmE7XG4gICAgbWF4LXdpZHRoOiAyMDBweDtcbiAgICBmb250LXNpemU6IDExcHg7XG4gICAgbWFyZ2luLXRvcDogNHB4O1xuICAgIHRleHQtYWxpZ246IHJpZ2h0O1xuICAgIG1hcmdpbi1yaWdodDogNDVweDtcbiAgfVxuICAudmFsdWUge1xuICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICBjb2xvcjogIzk0OWE5ZTtcbiAgICBmb250LXNpemU6IDIwcHg7XG4gICAgbWFyZ2luOiA3cHg7XG4gICAgb3BhY2l0eTogMC44O1xuICAgIG1hcmdpbi1yaWdodDogNDVweDtcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGFsaWduLWl0ZW1zOiBmaXJzdCBiYXNlbGluZTtcbiAgfVxuICAubnVtIHtcbiAgICBvcGFjaXR5OiAxO1xuICB9XG4gIC51bml0IHtcbiAgICBmb250LXNpemU6IDEycHg7XG4gICAgbWFyZ2luLWxlZnQ6IDFweDtcbiAgICBjb2xvcjogIzk0OWE5ZTtcbiAgfVxuICAvKiAuZGVjIHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgZm9udC1zaXplOiAxNHB4O1xuICAgIGNvbG9yOiAjOTQ5YTllO1xuICAgIG1hcmdpbi1sZWZ0OiAxcHg7XG4gICAgY29sb3I6ICNiM2I3YmE7XG4gICAgdG9wOiAzcHg7XG4gIH0gKi9cbiAgLyogdGhlIGFjdHVhbCBiYXIgKi9cbiAgLnNpemVkIHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgd2lkdGg6IDEwMCU7XG4gICAgYWxpZ24tc2VsZjogY2VudGVyO1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgZmxleC1kaXJlY3Rpb246IHJvdztcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGZsZXgtZW5kO1xuICAgIGZsZXgtd3JhcDogbm93cmFwO1xuICAgIC8qIGJvcmRlci1ib3R0b206IDFweCBkYXNoZWQgbGlnaHRncmV5OyAqL1xuICB9XG4gIC5heGlzIHtcbiAgICB3aWR0aDogNnB4O1xuICAgIG1hcmdpbi1sZWZ0OiA3cHg7XG4gICAgYm9yZGVyLWxlZnQ6IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGJvcmRlci10b3A6IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGJvcmRlci1ib3R0b206IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGhlaWdodDogMTAwJTtcbiAgfVxuICAuYmVzaWRlIHtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGZsZXgtZGlyZWN0aW9uOiByb3c7XG4gICAgZmxleC13cmFwOiBub3dyYXA7XG4gICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGZsZXgtc3RhcnQ7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIG1hcmdpbi1sZWZ0OiA1cHg7XG4gICAgYm94LXNpemluZzogYm9yZGVyLWJveDtcbiAgICBwYWRkaW5nLXRvcDogMTJweDtcbiAgICBwYWRkaW5nLWJvdHRvbTogMTJweDtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgd2lkdGg6IDQ1cHg7XG4gIH1cbiAgLnBlcmNlbnQge1xuICAgIGNvbG9yOiAjYjNiN2JhO1xuICAgIGZvbnQtc2l6ZTogMTJweDtcbiAgICB3aWR0aDogNDBweDtcbiAgfVxuICAuaW5zaWRlIHtcbiAgICBjb2xvcjogI2ZiZmJmYjtcbiAgfVxuICAuYmFyIHtcbiAgICAvKiBtaW4td2lkdGg6IDEwMHB4OyAqL1xuICAgIC8qIGZsZXg6IDE7ICovXG4gICAgZGlzcGxheTogZmxleDtcbiAgICBib3gtc2l6aW5nOiBib3JkZXItYm94O1xuICAgIC8qIHBhZGRpbmc6IDIlOyAqL1xuICAgIGp1c3RpZnktY29udGVudDogZmxleC1lbmQ7XG4gICAgYWxpZ24taXRlbXM6IGZsZXgtZW5kO1xuICAgIGJvcmRlci1yYWRpdXM6IDJweDtcbiAgICBib3gtc2hhZG93OiAycHggMnB4IDhweCAwcHggcmdiYSgwLCAwLCAwLCAwLjIpO1xuICB9XG4gIC5iYXI6aG92ZXIge1xuICAgIGJveC1zaGFkb3c6IDJweCAycHggOHB4IDBweCBzdGVlbGJsdWU7XG4gIH1cbiAgLmdob3N0IHtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgd2lkdGg6IDI1JTtcbiAgICAvKiBib3JkZXItcmFkaXVzOiAzcHg7ICovXG4gICAgLyogYm9yZGVyOiAxcHggZG90dGVkIGxpZ2h0Z3JleTsgKi9cbiAgfVxuPC9zdHlsZT5cblxuPCEtLSA8cHJlPntKU09OLnN0cmluZ2lmeShhcnIsIG51bGwsIDIpfTwvcHJlPiAtLT5cbjxkaXYgY2xhc3M9XCJjb250YWluZXJcIiBzdHlsZT1cImhlaWdodDp7aH1weDtcIj5cbiAgeyNlYWNoIGFyciBhcyBiYXJ9XG4gICAgPGRpdiBjbGFzcz1cImJveFwiPlxuICAgICAgPCEtLSB0b3AgbnVtYmVyIC0tPlxuICAgICAgPGRpdiBjbGFzcz1cInZhbHVlXCIgc3R5bGU9XCJib3JkZXItYm90dG9tOiAycHggc29saWQge2Jhci5jb2xvcn07XCI+XG4gICAgICAgIDxzcGFuIGNsYXNzPVwibnVtXCI+e2Jhci5mbXRbMF19PC9zcGFuPlxuICAgICAgICA8c3BhbiBjbGFzcz1cInVuaXRcIj57YmFyLmZtdFsyXSB8fCAnJ308L3NwYW4+XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3M9XCJzaXplZFwiIHN0eWxlPVwiaGVpZ2h0OntiYXIuaGVpZ2h0fSU7IFwiPlxuICAgICAgICB7I2lmIGJhci5yZXNjYWxlZH1cbiAgICAgICAgICA8ZGl2IGNsYXNzPVwiZ2hvc3RcIiAvPlxuICAgICAgICAgIDxkaXYgY2xhc3M9XCJnaG9zdFwiIC8+XG4gICAgICAgICAgPGRpdiBjbGFzcz1cImdob3N0XCIgLz5cbiAgICAgICAgey9pZn1cbiAgICAgICAgPGRpdlxuICAgICAgICAgIGNsYXNzPVwiYmFyXCJcbiAgICAgICAgICBzdHlsZT1cImJhY2tncm91bmQtY29sb3I6e2Jhci5jb2xvcn07IHdpZHRoOntiYXIud2lkdGh9OyBtYXgtd2lkdGg6e2Jhci53aWR0aH07XG4gICAgICAgICAgaGVpZ2h0OjEwMCU7XCI+XG4gICAgICAgICAgeyNpZiBiYXIucmVzY2FsZWQgJiYgYmFyLnBlcmNlbnRhZ2UgIT09IDB9XG4gICAgICAgICAgICA8ZGl2IGNsYXNzPVwiaW5zaWRlXCI+e2Jhci5wZXJjZW50YWdlICE9PSAxMDAgPyBiYXIucGVyY2VudGFnZSArICclJyA6ICcnfTwvZGl2PlxuICAgICAgICAgIHsvaWZ9XG4gICAgICAgIDwvZGl2PlxuXG4gICAgICAgIDxkaXYgY2xhc3M9XCJiZXNpZGVcIj5cbiAgICAgICAgICB7I2lmIGJhci5wZXJjZW50YWdlICE9PSAxMDAgJiYgYmFyLnJlc2NhbGVkICE9PSB0cnVlfVxuICAgICAgICAgICAgPGRpdiBjbGFzcz1cImF4aXNcIiAvPlxuICAgICAgICAgICAgPGRpdiBjbGFzcz1cInBlcmNlbnRcIj57YmFyLnBlcmNlbnRhZ2UgIT09IDEwMCA/IGJhci5wZXJjZW50YWdlICsgJyUnIDogJyd9PC9kaXY+XG4gICAgICAgICAgey9pZn1cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Rpdj5cbiAgICAgIDwhLS0gYm90dG9tIGxhYmVsIC0tPlxuICAgICAgPGRpdiBjbGFzcz1cImxhYmVsXCI+e2Jhci5sYWJlbH08L2Rpdj5cbiAgICA8L2Rpdj5cbiAgey9lYWNofVxuXG48L2Rpdj5cbjxzbG90IC8+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBV0UsVUFBVSxlQUFDLENBQUMsQUFDVixNQUFNLENBQUUsSUFBSSxDQUNaLFFBQVEsQ0FBRSxRQUFRLENBQ2xCLEtBQUssQ0FBRSxJQUFJLENBQ1gsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsR0FBRyxDQUNuQixlQUFlLENBQUUsWUFBWSxDQUM3QixXQUFXLENBQUUsTUFBTSxDQUNuQixVQUFVLENBQUUsTUFBTSxDQUNsQixTQUFTLENBQUUsTUFBTSxDQUNqQixVQUFVLENBQUUsT0FBTyxBQUNyQixDQUFDLEFBRUQsSUFBSSxlQUFDLENBQUMsQUFDSixRQUFRLENBQUUsUUFB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 */";
+    	style.id = "svelte-1v9k28o-style";
+    	style.textContent = ".container.svelte-1v9k28o{height:100%;position:relative;width:100%;display:flex;flex-direction:row;justify-content:space-around;align-items:center;text-align:center;flex-wrap:nowrap;align-self:stretch}.box.svelte-1v9k28o{position:relative;box-sizing:border-box;padding:10px;display:flex;height:100%;flex:1;flex-direction:column;justify-content:flex-end;align-items:flex-end}.label.svelte-1v9k28o{position:relative;color:#b3b7ba;max-width:200px;font-size:11px;margin-top:4px;text-align:right;margin-right:45px}.value.svelte-1v9k28o{position:relative;color:#949a9e;font-size:20px;margin:7px;opacity:0.8;margin-right:45px;justify-content:center;display:flex;align-items:first baseline}.num.svelte-1v9k28o{opacity:1}.unit.svelte-1v9k28o{font-size:12px;margin-left:1px;color:#949a9e}.sized.svelte-1v9k28o{position:relative;width:100%;align-self:center;display:flex;flex-direction:row;justify-content:flex-end;flex-wrap:nowrap}.axis.svelte-1v9k28o{width:6px;margin-left:7px;border-left:1px dashed lightgrey;border-top:1px dashed lightgrey;border-bottom:1px dashed lightgrey;height:100%}.beside.svelte-1v9k28o{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;position:relative;margin-left:5px;box-sizing:border-box;padding-top:12px;padding-bottom:12px;height:100%;width:45px}.percent.svelte-1v9k28o{color:#b3b7ba;font-size:12px;width:40px}.inside.svelte-1v9k28o{color:#fbfbfb}.bar.svelte-1v9k28o{display:flex;box-sizing:border-box;justify-content:flex-end;align-items:flex-end;border-radius:2px;box-shadow:2px 2px 8px 0px rgba(0, 0, 0, 0.2);height:100%}.bar.svelte-1v9k28o:hover{box-shadow:2px 2px 8px 0px steelblue}.ghost.svelte-1v9k28o{height:100%;width:25%}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiU2NhbGUuc3ZlbHRlIiwic291cmNlcyI6WyJTY2FsZS5zdmVsdGUiXSwic291cmNlc0NvbnRlbnQiOlsiPHNjcmlwdD5cbiAgaW1wb3J0IHsgc2V0Q29udGV4dCB9IGZyb20gJ3N2ZWx0ZSdcbiAgaW1wb3J0IHsgdHdlZW5lZCB9IGZyb20gJ3N2ZWx0ZS9tb3Rpb24nXG4gIGltcG9ydCBsYXlvdXQgZnJvbSAnLi9sYXlvdXQnXG4gIGV4cG9ydCBsZXQgaGVpZ2h0ID0gNDAwXG5cbiAgaW1wb3J0IHsgd3JpdGFibGUgfSBmcm9tICdzdmVsdGUvc3RvcmUnXG4gIGxldCB0aGluZ3MgPSB3cml0YWJsZShbXSlcbiAgc2V0Q29udGV4dCgndGhpbmdzJywgdGhpbmdzKVxuXG4gICQ6IGggPSBoZWlnaHRcbiAgJDogYXJyID0gbGF5b3V0KCR0aGluZ3MsIGgpXG48L3NjcmlwdD5cblxuPHN0eWxlPlxuICAuY29udGFpbmVyIHtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIHdpZHRoOiAxMDAlO1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgZmxleC1kaXJlY3Rpb246IHJvdztcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IHNwYWNlLWFyb3VuZDtcbiAgICBhbGlnbi1pdGVtczogY2VudGVyO1xuICAgIHRleHQtYWxpZ246IGNlbnRlcjtcbiAgICBmbGV4LXdyYXA6IG5vd3JhcDtcbiAgICBhbGlnbi1zZWxmOiBzdHJldGNoO1xuICB9XG4gIC5ib3gge1xuICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICBib3gtc2l6aW5nOiBib3JkZXItYm94O1xuICAgIHBhZGRpbmc6IDEwcHg7XG4gICAgZGlzcGxheTogZmxleDtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgZmxleDogMTtcbiAgICBmbGV4LWRpcmVjdGlvbjogY29sdW1uO1xuICAgIGp1c3RpZnktY29udGVudDogZmxleC1lbmQ7XG4gICAgYWxpZ24taXRlbXM6IGZsZXgtZW5kO1xuICB9XG4gIC5sYWJlbCB7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIGNvbG9yOiAjYjNiN2JhO1xuICAgIG1heC13aWR0aDogMjAwcHg7XG4gICAgZm9udC1zaXplOiAxMXB4O1xuICAgIG1hcmdpbi10b3A6IDRweDtcbiAgICB0ZXh0LWFsaWduOiByaWdodDtcbiAgICBtYXJnaW4tcmlnaHQ6IDQ1cHg7XG4gIH1cbiAgLnZhbHVlIHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgY29sb3I6ICM5NDlhOWU7XG4gICAgZm9udC1zaXplOiAyMHB4O1xuICAgIG1hcmdpbjogN3B4O1xuICAgIG9wYWNpdHk6IDAuODtcbiAgICBtYXJnaW4tcmlnaHQ6IDQ1cHg7XG4gICAganVzdGlmeS1jb250ZW50OiBjZW50ZXI7XG4gICAgZGlzcGxheTogZmxleDtcbiAgICBhbGlnbi1pdGVtczogZmlyc3QgYmFzZWxpbmU7XG4gIH1cbiAgLm51bSB7XG4gICAgb3BhY2l0eTogMTtcbiAgfVxuICAudW5pdCB7XG4gICAgZm9udC1zaXplOiAxMnB4O1xuICAgIG1hcmdpbi1sZWZ0OiAxcHg7XG4gICAgY29sb3I6ICM5NDlhOWU7XG4gIH1cbiAgLyogdGhlIGFjdHVhbCBiYXIgKi9cbiAgLnNpemVkIHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgd2lkdGg6IDEwMCU7XG4gICAgYWxpZ24tc2VsZjogY2VudGVyO1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgZmxleC1kaXJlY3Rpb246IHJvdztcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGZsZXgtZW5kO1xuICAgIGZsZXgtd3JhcDogbm93cmFwO1xuICB9XG4gIC5heGlzIHtcbiAgICB3aWR0aDogNnB4O1xuICAgIG1hcmdpbi1sZWZ0OiA3cHg7XG4gICAgYm9yZGVyLWxlZnQ6IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGJvcmRlci10b3A6IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGJvcmRlci1ib3R0b206IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGhlaWdodDogMTAwJTtcbiAgfVxuICAuYmVzaWRlIHtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGZsZXgtZGlyZWN0aW9uOiByb3c7XG4gICAgZmxleC13cmFwOiBub3dyYXA7XG4gICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGZsZXgtc3RhcnQ7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIG1hcmdpbi1sZWZ0OiA1cHg7XG4gICAgYm94LXNpemluZzogYm9yZGVyLWJveDtcbiAgICBwYWRkaW5nLXRvcDogMTJweDtcbiAgICBwYWRkaW5nLWJvdHRvbTogMTJweDtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgd2lkdGg6IDQ1cHg7XG4gIH1cbiAgLnBlcmNlbnQge1xuICAgIGNvbG9yOiAjYjNiN2JhO1xuICAgIGZvbnQtc2l6ZTogMTJweDtcbiAgICB3aWR0aDogNDBweDtcbiAgfVxuICAuaW5zaWRlIHtcbiAgICBjb2xvcjogI2ZiZmJmYjtcbiAgfVxuICAuYmFyIHtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGJveC1zaXppbmc6IGJvcmRlci1ib3g7XG4gICAganVzdGlmeS1jb250ZW50OiBmbGV4LWVuZDtcbiAgICBhbGlnbi1pdGVtczogZmxleC1lbmQ7XG4gICAgYm9yZGVyLXJhZGl1czogMnB4O1xuICAgIGJveC1zaGFkb3c6IDJweCAycHggOHB4IDBweCByZ2JhKDAsIDAsIDAsIDAuMik7XG4gICAgaGVpZ2h0OiAxMDAlO1xuICB9XG4gIC5iYXI6aG92ZXIge1xuICAgIGJveC1zaGFkb3c6IDJweCAycHggOHB4IDBweCBzdGVlbGJsdWU7XG4gIH1cbiAgLmdob3N0IHtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgd2lkdGg6IDI1JTtcbiAgfVxuPC9zdHlsZT5cblxuPCEtLSA8cHJlPntKU09OLnN0cmluZ2lmeShhcnIsIG51bGwsIDIpfTwvcHJlPiAtLT5cbjxkaXYgY2xhc3M9XCJjb250YWluZXJcIiBzdHlsZT1cImhlaWdodDp7aH1weDtcIj5cbiAgeyNlYWNoIGFyciBhcyBiYXJ9XG4gICAgPGRpdiBjbGFzcz1cImJveFwiPlxuICAgICAgPCEtLSB0b3AgbnVtYmVyIC0tPlxuICAgICAgPGRpdiBjbGFzcz1cInZhbHVlXCIgc3R5bGU9XCJib3JkZXItYm90dG9tOiAycHggc29saWQge2Jhci5jb2xvcn07XCI+XG4gICAgICAgIDxzcGFuIGNsYXNzPVwibnVtXCI+e2Jhci5mbXRbMF19PC9zcGFuPlxuICAgICAgICA8c3BhbiBjbGFzcz1cInVuaXRcIj57YmFyLmZtdFsyXSB8fCAnJ308L3NwYW4+XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3M9XCJzaXplZFwiIHN0eWxlPVwiaGVpZ2h0OntiYXIuaGVpZ2h0fSU7IFwiPlxuICAgICAgICB7I2lmIGJhci5yZXNjYWxlZH1cbiAgICAgICAgICA8ZGl2IGNsYXNzPVwiZ2hvc3RcIiAvPlxuICAgICAgICAgIDxkaXYgY2xhc3M9XCJnaG9zdFwiIC8+XG4gICAgICAgICAgPGRpdiBjbGFzcz1cImdob3N0XCIgLz5cbiAgICAgICAgey9pZn1cbiAgICAgICAgPGRpdlxuICAgICAgICAgIGNsYXNzPVwiYmFyXCJcbiAgICAgICAgICBzdHlsZT1cImJhY2tncm91bmQtY29sb3I6e2Jhci5jb2xvcn07IHdpZHRoOntiYXIud2lkdGh9OyBtYXgtd2lkdGg6e2Jhci53aWR0aH07XCI+XG4gICAgICAgICAgeyNpZiBiYXIucmVzY2FsZWQgJiYgYmFyLnBlcmNlbnRhZ2UgIT09IDB9XG4gICAgICAgICAgICA8ZGl2IGNsYXNzPVwiaW5zaWRlXCI+e2Jhci5wZXJjZW50YWdlICE9PSAxMDAgPyBiYXIucGVyY2VudGFnZSArICclJyA6ICcnfTwvZGl2PlxuICAgICAgICAgIHsvaWZ9XG4gICAgICAgIDwvZGl2PlxuICAgICAgICA8ZGl2IGNsYXNzPVwiYmVzaWRlXCI+XG4gICAgICAgICAgeyNpZiBiYXIucGVyY2VudGFnZSAhPT0gMTAwICYmIGJhci5yZXNjYWxlZCAhPT0gdHJ1ZX1cbiAgICAgICAgICAgIDxkaXYgY2xhc3M9XCJheGlzXCIgLz5cbiAgICAgICAgICAgIDxkaXYgY2xhc3M9XCJwZXJjZW50XCI+e2Jhci5wZXJjZW50YWdlICE9PSAxMDAgPyBiYXIucGVyY2VudGFnZSArICclJyA6ICcnfTwvZGl2PlxuICAgICAgICAgIHsvaWZ9XG4gICAgICAgIDwvZGl2PlxuICAgICAgPC9kaXY+XG4gICAgICA8IS0tIGJvdHRvbSBsYWJlbCAtLT5cbiAgICAgIDxkaXYgY2xhc3M9XCJsYWJlbFwiPntiYXIubGFiZWx9PC9kaXY+XG4gICAgPC9kaXY+XG4gIHsvZWFjaH1cbjwvZGl2PlxuPHNsb3QgLz5cbiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFlRSxVQUFVLGVBQUMsQ0FBQyxBQUNWLE1BQU0sQ0FBRSxJQUFJLENBQ1osUUFBUSxDQUFFLFFBQVEsQ0FDbEIsS0FBSyxDQUFFLElBQUksQ0FDWCxPQUFPLENBQUUsSUFBSSxDQUNiLGNBQWMsQ0FBRSxHQUFHLENBQ25CLGVBQWUsQ0FBRSxZQUFZLENBQzdCLFdBQVcsQ0FBRSxNQUFNLENBQ25CLFVBQVUsQ0FBRSxNQUFNLENBQ2xCLFNBQVMsQ0FBRSxNQUFNLENBQ2pCLFVBQVUsQ0FBRSxPQUFPLEFBQ3JCLENBQUMsQUFDRCxJQUFJLGVBQUMsQ0FBQyxBQUNKLFFBQVEsQ0FBRSxRQUFRLENBQ2xCLFVBQVUsQ0FBRSxVQUFVLENBQ3RCLE9BQU8sQ0FBRSxJQUFJLENBQ2IsT0FBTyxDQUFFLElBQUksQ0FDYixNQUFNLENBQUUsSUFBSSxDQUNaLElBQUksQ0FBRSxDQUFDLENBQ1AsY0FBYyxDQUFFLE1BQU0sQ0FDdEIsZUFBZSxDQUFFLFFBQVEsQ0FDekIsV0FBVyxDQUFFLFFBQVEsQUFDdkIsQ0FBQyxBQUNELE1BQU0sZUFBQyxDQUFDLEFBQ04sUUFBUSxDQUFFLFFBQVEsQ0FDbEIsS0FBSyxDQUFFLE9BQU8sQ0FDZCxTQUFTLENBQUUsS0FBSyxDQUNoQixTQUFTLENBQUUsSUFBSSxDQUNmLFVBQVUs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 */";
     	append_dev(document.head, style);
     }
 
     function get_each_context(ctx, list, i) {
     	const child_ctx = ctx.slice();
-    	child_ctx[6] = list[i];
+    	child_ctx[7] = list[i];
     	return child_ctx;
     }
 
-    // (145:8) {#if bar.rescaled}
+    // (135:8) {#if bar.rescaled}
     function create_if_block_2(ctx) {
     	let div0;
     	let t0;
@@ -713,12 +707,12 @@ var app = (function () {
     			div1 = element("div");
     			t1 = space();
     			div2 = element("div");
-    			attr_dev(div0, "class", "ghost svelte-19rgbmb");
-    			add_location(div0, file, 145, 10, 3112);
-    			attr_dev(div1, "class", "ghost svelte-19rgbmb");
-    			add_location(div1, file, 146, 10, 3144);
-    			attr_dev(div2, "class", "ghost svelte-19rgbmb");
-    			add_location(div2, file, 147, 10, 3176);
+    			attr_dev(div0, "class", "ghost svelte-1v9k28o");
+    			add_location(div0, file, 135, 10, 2861);
+    			attr_dev(div1, "class", "ghost svelte-1v9k28o");
+    			add_location(div1, file, 136, 10, 2893);
+    			attr_dev(div2, "class", "ghost svelte-1v9k28o");
+    			add_location(div2, file, 137, 10, 2925);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div0, anchor);
@@ -740,19 +734,19 @@ var app = (function () {
     		block,
     		id: create_if_block_2.name,
     		type: "if",
-    		source: "(145:8) {#if bar.rescaled}",
+    		source: "(135:8) {#if bar.rescaled}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (154:10) {#if bar.rescaled && bar.percentage !== 0}
+    // (143:10) {#if bar.rescaled && bar.percentage !== 0}
     function create_if_block_1(ctx) {
     	let div;
 
-    	let t_value = (/*bar*/ ctx[6].percentage !== 100
-    	? /*bar*/ ctx[6].percentage + "%"
+    	let t_value = (/*bar*/ ctx[7].percentage !== 100
+    	? /*bar*/ ctx[7].percentage + "%"
     	: "") + "";
 
     	let t;
@@ -761,16 +755,16 @@ var app = (function () {
     		c: function create() {
     			div = element("div");
     			t = text(t_value);
-    			attr_dev(div, "class", "inside svelte-19rgbmb");
-    			add_location(div, file, 154, 12, 3426);
+    			attr_dev(div, "class", "inside svelte-1v9k28o");
+    			add_location(div, file, 143, 12, 3152);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div, anchor);
     			append_dev(div, t);
     		},
     		p: function update(ctx, dirty) {
-    			if (dirty & /*arr*/ 2 && t_value !== (t_value = (/*bar*/ ctx[6].percentage !== 100
-    			? /*bar*/ ctx[6].percentage + "%"
+    			if (dirty & /*arr*/ 2 && t_value !== (t_value = (/*bar*/ ctx[7].percentage !== 100
+    			? /*bar*/ ctx[7].percentage + "%"
     			: "") + "")) set_data_dev(t, t_value);
     		},
     		d: function destroy(detaching) {
@@ -782,21 +776,21 @@ var app = (function () {
     		block,
     		id: create_if_block_1.name,
     		type: "if",
-    		source: "(154:10) {#if bar.rescaled && bar.percentage !== 0}",
+    		source: "(143:10) {#if bar.rescaled && bar.percentage !== 0}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (160:10) {#if bar.percentage !== 100 && bar.rescaled !== true}
+    // (148:10) {#if bar.percentage !== 100 && bar.rescaled !== true}
     function create_if_block(ctx) {
     	let div0;
     	let t0;
     	let div1;
 
-    	let t1_value = (/*bar*/ ctx[6].percentage !== 100
-    	? /*bar*/ ctx[6].percentage + "%"
+    	let t1_value = (/*bar*/ ctx[7].percentage !== 100
+    	? /*bar*/ ctx[7].percentage + "%"
     	: "") + "";
 
     	let t1;
@@ -807,10 +801,10 @@ var app = (function () {
     			t0 = space();
     			div1 = element("div");
     			t1 = text(t1_value);
-    			attr_dev(div0, "class", "axis svelte-19rgbmb");
-    			add_location(div0, file, 160, 12, 3642);
-    			attr_dev(div1, "class", "percent svelte-19rgbmb");
-    			add_location(div1, file, 161, 12, 3675);
+    			attr_dev(div0, "class", "axis svelte-1v9k28o");
+    			add_location(div0, file, 148, 12, 3367);
+    			attr_dev(div1, "class", "percent svelte-1v9k28o");
+    			add_location(div1, file, 149, 12, 3400);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div0, anchor);
@@ -819,8 +813,8 @@ var app = (function () {
     			append_dev(div1, t1);
     		},
     		p: function update(ctx, dirty) {
-    			if (dirty & /*arr*/ 2 && t1_value !== (t1_value = (/*bar*/ ctx[6].percentage !== 100
-    			? /*bar*/ ctx[6].percentage + "%"
+    			if (dirty & /*arr*/ 2 && t1_value !== (t1_value = (/*bar*/ ctx[7].percentage !== 100
+    			? /*bar*/ ctx[7].percentage + "%"
     			: "") + "")) set_data_dev(t1, t1_value);
     		},
     		d: function destroy(detaching) {
@@ -834,23 +828,23 @@ var app = (function () {
     		block,
     		id: create_if_block.name,
     		type: "if",
-    		source: "(160:10) {#if bar.percentage !== 100 && bar.rescaled !== true}",
+    		source: "(148:10) {#if bar.percentage !== 100 && bar.rescaled !== true}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (137:2) {#each arr as bar}
+    // (127:2) {#each arr as bar}
     function create_each_block(ctx) {
     	let div5;
     	let div0;
     	let span0;
-    	let t0_value = /*bar*/ ctx[6].fmt[0] + "";
+    	let t0_value = /*bar*/ ctx[7].fmt[0] + "";
     	let t0;
     	let t1;
     	let span1;
-    	let t2_value = (/*bar*/ ctx[6].fmt[2] || "") + "";
+    	let t2_value = (/*bar*/ ctx[7].fmt[2] || "") + "";
     	let t2;
     	let t3;
     	let div3;
@@ -860,12 +854,12 @@ var app = (function () {
     	let div2;
     	let t6;
     	let div4;
-    	let t7_value = /*bar*/ ctx[6].label + "";
+    	let t7_value = /*bar*/ ctx[7].label + "";
     	let t7;
     	let t8;
-    	let if_block0 = /*bar*/ ctx[6].rescaled && create_if_block_2(ctx);
-    	let if_block1 = /*bar*/ ctx[6].rescaled && /*bar*/ ctx[6].percentage !== 0 && create_if_block_1(ctx);
-    	let if_block2 = /*bar*/ ctx[6].percentage !== 100 && /*bar*/ ctx[6].rescaled !== true && create_if_block(ctx);
+    	let if_block0 = /*bar*/ ctx[7].rescaled && create_if_block_2(ctx);
+    	let if_block1 = /*bar*/ ctx[7].rescaled && /*bar*/ ctx[7].percentage !== 0 && create_if_block_1(ctx);
+    	let if_block2 = /*bar*/ ctx[7].percentage !== 100 && /*bar*/ ctx[7].rescaled !== true && create_if_block(ctx);
 
     	const block = {
     		c: function create() {
@@ -889,28 +883,27 @@ var app = (function () {
     			div4 = element("div");
     			t7 = text(t7_value);
     			t8 = space();
-    			attr_dev(span0, "class", "num svelte-19rgbmb");
-    			add_location(span0, file, 140, 8, 2914);
-    			attr_dev(span1, "class", "unit svelte-19rgbmb");
-    			add_location(span1, file, 141, 8, 2960);
-    			attr_dev(div0, "class", "value svelte-19rgbmb");
-    			set_style(div0, "border-bottom", "2px solid " + /*bar*/ ctx[6].color);
-    			add_location(div0, file, 139, 6, 2840);
-    			attr_dev(div1, "class", "bar svelte-19rgbmb");
-    			set_style(div1, "background-color", /*bar*/ ctx[6].color);
-    			set_style(div1, "width", /*bar*/ ctx[6].width);
-    			set_style(div1, "max-width", /*bar*/ ctx[6].width);
-    			set_style(div1, "height", "100%");
-    			add_location(div1, file, 149, 8, 3220);
-    			attr_dev(div2, "class", "beside svelte-19rgbmb");
-    			add_location(div2, file, 158, 8, 3545);
-    			attr_dev(div3, "class", "sized svelte-19rgbmb");
-    			set_style(div3, "height", /*bar*/ ctx[6].height + "%");
-    			add_location(div3, file, 143, 6, 3024);
-    			attr_dev(div4, "class", "label svelte-19rgbmb");
-    			add_location(div4, file, 166, 6, 3833);
-    			attr_dev(div5, "class", "box svelte-19rgbmb");
-    			add_location(div5, file, 137, 4, 2790);
+    			attr_dev(span0, "class", "num svelte-1v9k28o");
+    			add_location(span0, file, 130, 8, 2663);
+    			attr_dev(span1, "class", "unit svelte-1v9k28o");
+    			add_location(span1, file, 131, 8, 2709);
+    			attr_dev(div0, "class", "value svelte-1v9k28o");
+    			set_style(div0, "border-bottom", "2px solid " + /*bar*/ ctx[7].color);
+    			add_location(div0, file, 129, 6, 2589);
+    			attr_dev(div1, "class", "bar svelte-1v9k28o");
+    			set_style(div1, "background-color", /*bar*/ ctx[7].color);
+    			set_style(div1, "width", /*bar*/ ctx[7].width);
+    			set_style(div1, "max-width", /*bar*/ ctx[7].width);
+    			add_location(div1, file, 139, 8, 2969);
+    			attr_dev(div2, "class", "beside svelte-1v9k28o");
+    			add_location(div2, file, 146, 8, 3270);
+    			attr_dev(div3, "class", "sized svelte-1v9k28o");
+    			set_style(div3, "height", /*bar*/ ctx[7].height + "%");
+    			add_location(div3, file, 133, 6, 2773);
+    			attr_dev(div4, "class", "label svelte-1v9k28o");
+    			add_location(div4, file, 154, 6, 3558);
+    			attr_dev(div5, "class", "box svelte-1v9k28o");
+    			add_location(div5, file, 127, 4, 2539);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div5, anchor);
@@ -935,14 +928,14 @@ var app = (function () {
     			append_dev(div5, t8);
     		},
     		p: function update(ctx, dirty) {
-    			if (dirty & /*arr*/ 2 && t0_value !== (t0_value = /*bar*/ ctx[6].fmt[0] + "")) set_data_dev(t0, t0_value);
-    			if (dirty & /*arr*/ 2 && t2_value !== (t2_value = (/*bar*/ ctx[6].fmt[2] || "") + "")) set_data_dev(t2, t2_value);
+    			if (dirty & /*arr*/ 2 && t0_value !== (t0_value = /*bar*/ ctx[7].fmt[0] + "")) set_data_dev(t0, t0_value);
+    			if (dirty & /*arr*/ 2 && t2_value !== (t2_value = (/*bar*/ ctx[7].fmt[2] || "") + "")) set_data_dev(t2, t2_value);
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div0, "border-bottom", "2px solid " + /*bar*/ ctx[6].color);
+    				set_style(div0, "border-bottom", "2px solid " + /*bar*/ ctx[7].color);
     			}
 
-    			if (/*bar*/ ctx[6].rescaled) {
+    			if (/*bar*/ ctx[7].rescaled) {
     				if (if_block0) ; else {
     					if_block0 = create_if_block_2(ctx);
     					if_block0.c();
@@ -953,7 +946,7 @@ var app = (function () {
     				if_block0 = null;
     			}
 
-    			if (/*bar*/ ctx[6].rescaled && /*bar*/ ctx[6].percentage !== 0) {
+    			if (/*bar*/ ctx[7].rescaled && /*bar*/ ctx[7].percentage !== 0) {
     				if (if_block1) {
     					if_block1.p(ctx, dirty);
     				} else {
@@ -967,18 +960,18 @@ var app = (function () {
     			}
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div1, "background-color", /*bar*/ ctx[6].color);
+    				set_style(div1, "background-color", /*bar*/ ctx[7].color);
     			}
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div1, "width", /*bar*/ ctx[6].width);
+    				set_style(div1, "width", /*bar*/ ctx[7].width);
     			}
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div1, "max-width", /*bar*/ ctx[6].width);
+    				set_style(div1, "max-width", /*bar*/ ctx[7].width);
     			}
 
-    			if (/*bar*/ ctx[6].percentage !== 100 && /*bar*/ ctx[6].rescaled !== true) {
+    			if (/*bar*/ ctx[7].percentage !== 100 && /*bar*/ ctx[7].rescaled !== true) {
     				if (if_block2) {
     					if_block2.p(ctx, dirty);
     				} else {
@@ -992,10 +985,10 @@ var app = (function () {
     			}
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div3, "height", /*bar*/ ctx[6].height + "%");
+    				set_style(div3, "height", /*bar*/ ctx[7].height + "%");
     			}
 
-    			if (dirty & /*arr*/ 2 && t7_value !== (t7_value = /*bar*/ ctx[6].label + "")) set_data_dev(t7, t7_value);
+    			if (dirty & /*arr*/ 2 && t7_value !== (t7_value = /*bar*/ ctx[7].label + "")) set_data_dev(t7, t7_value);
     		},
     		d: function destroy(detaching) {
     			if (detaching) detach_dev(div5);
@@ -1009,7 +1002,7 @@ var app = (function () {
     		block,
     		id: create_each_block.name,
     		type: "each",
-    		source: "(137:2) {#each arr as bar}",
+    		source: "(127:2) {#each arr as bar}",
     		ctx
     	});
 
@@ -1028,8 +1021,8 @@ var app = (function () {
     		each_blocks[i] = create_each_block(get_each_context(ctx, each_value, i));
     	}
 
-    	const default_slot_template = /*$$slots*/ ctx[4].default;
-    	const default_slot = create_slot(default_slot_template, ctx, /*$$scope*/ ctx[3], null);
+    	const default_slot_template = /*$$slots*/ ctx[5].default;
+    	const default_slot = create_slot(default_slot_template, ctx, /*$$scope*/ ctx[4], null);
 
     	const block = {
     		c: function create() {
@@ -1041,9 +1034,9 @@ var app = (function () {
 
     			t = space();
     			if (default_slot) default_slot.c();
-    			attr_dev(div, "class", "container svelte-19rgbmb");
+    			attr_dev(div, "class", "container svelte-1v9k28o");
     			set_style(div, "height", /*h*/ ctx[0] + "px");
-    			add_location(div, file, 135, 0, 2719);
+    			add_location(div, file, 125, 0, 2468);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -1093,8 +1086,8 @@ var app = (function () {
     			}
 
     			if (default_slot) {
-    				if (default_slot.p && dirty & /*$$scope*/ 8) {
-    					update_slot(default_slot, default_slot_template, ctx, /*$$scope*/ ctx[3], dirty, null, null);
+    				if (default_slot.p && dirty & /*$$scope*/ 16) {
+    					update_slot(default_slot, default_slot_template, ctx, /*$$scope*/ ctx[4], dirty, null, null);
     				}
     			}
     		},
@@ -1128,9 +1121,11 @@ var app = (function () {
 
     function instance($$self, $$props, $$invalidate) {
     	let $things;
-    	validate_store(things, "things");
-    	component_subscribe($$self, things, $$value => $$invalidate(5, $things = $$value));
     	let { height = 400 } = $$props;
+    	let things = writable([]);
+    	validate_store(things, "things");
+    	component_subscribe($$self, things, value => $$invalidate(6, $things = value));
+    	setContext("things", things);
     	const writable_props = ["height"];
 
     	Object.keys($$props).forEach(key => {
@@ -1141,24 +1136,25 @@ var app = (function () {
     	validate_slots("Scale", $$slots, ['default']);
 
     	$$self.$$set = $$props => {
-    		if ("height" in $$props) $$invalidate(2, height = $$props.height);
-    		if ("$$scope" in $$props) $$invalidate(3, $$scope = $$props.$$scope);
+    		if ("height" in $$props) $$invalidate(3, height = $$props.height);
+    		if ("$$scope" in $$props) $$invalidate(4, $$scope = $$props.$$scope);
     	};
 
     	$$self.$capture_state = () => ({
     		setContext,
-    		onMount,
-    		things,
     		tweened,
     		layout,
     		height,
+    		writable,
+    		things,
     		h,
     		arr,
     		$things
     	});
 
     	$$self.$inject_state = $$props => {
-    		if ("height" in $$props) $$invalidate(2, height = $$props.height);
+    		if ("height" in $$props) $$invalidate(3, height = $$props.height);
+    		if ("things" in $$props) $$invalidate(2, things = $$props.things);
     		if ("h" in $$props) $$invalidate(0, h = $$props.h);
     		if ("arr" in $$props) $$invalidate(1, arr = $$props.arr);
     	};
@@ -1171,23 +1167,23 @@ var app = (function () {
     	}
 
     	$$self.$$.update = () => {
-    		if ($$self.$$.dirty & /*height*/ 4) {
+    		if ($$self.$$.dirty & /*height*/ 8) {
     			 $$invalidate(0, h = height);
     		}
 
-    		if ($$self.$$.dirty & /*$things, h*/ 33) {
+    		if ($$self.$$.dirty & /*$things, h*/ 65) {
     			 $$invalidate(1, arr = layout($things));
     		}
     	};
 
-    	return [h, arr, height, $$scope, $$slots];
+    	return [h, arr, things, height, $$scope, $$slots];
     }
 
     class Scale extends SvelteComponentDev {
     	constructor(options) {
     		super(options);
-    		if (!document.getElementById("svelte-19rgbmb-style")) add_css();
-    		init(this, options, instance, create_fragment, safe_not_equal, { height: 2 });
+    		if (!document.getElementById("svelte-1v9k28o-style")) add_css();
+    		init(this, options, instance, create_fragment, safe_not_equal, { height: 3 });
 
     		dispatch_dev("SvelteRegisterComponent", {
     			component: this,
@@ -1260,12 +1256,13 @@ var app = (function () {
 
     function instance$1($$self, $$props, $$invalidate) {
     	let $things;
-    	validate_store(things, "things");
-    	component_subscribe($$self, things, $$value => $$invalidate(5, $things = $$value));
     	let { color = "steelblue" } = $$props;
     	let { label = "" } = $$props;
     	let { value = 0 } = $$props;
     	let { aspect = "" } = $$props;
+    	let things = getContext("things");
+    	validate_store(things, "things");
+    	component_subscribe($$self, things, value => $$invalidate(6, $things = value));
     	let { id = uuid() } = $$props;
     	let colors = spencerColor.colors;
     	color = colors[color] || color;
@@ -1281,7 +1278,11 @@ var app = (function () {
     	afterUpdate(() => {
     		things.update(arr => {
     			let o = arr.find(o => o.id === id);
-    			o.value = value;
+
+    			if (o) {
+    				o.value = value;
+    			}
+
     			return arr;
     		});
     	});
@@ -1296,15 +1297,15 @@ var app = (function () {
     	validate_slots("Thing", $$slots, []);
 
     	$$self.$$set = $$props => {
-    		if ("color" in $$props) $$invalidate(0, color = $$props.color);
-    		if ("label" in $$props) $$invalidate(1, label = $$props.label);
-    		if ("value" in $$props) $$invalidate(2, value = $$props.value);
-    		if ("aspect" in $$props) $$invalidate(3, aspect = $$props.aspect);
-    		if ("id" in $$props) $$invalidate(4, id = $$props.id);
+    		if ("color" in $$props) $$invalidate(1, color = $$props.color);
+    		if ("label" in $$props) $$invalidate(2, label = $$props.label);
+    		if ("value" in $$props) $$invalidate(3, value = $$props.value);
+    		if ("aspect" in $$props) $$invalidate(4, aspect = $$props.aspect);
+    		if ("id" in $$props) $$invalidate(5, id = $$props.id);
     	};
 
     	$$self.$capture_state = () => ({
-    		things,
+    		getContext,
     		afterUpdate,
     		c: spencerColor,
     		uuid,
@@ -1312,17 +1313,19 @@ var app = (function () {
     		label,
     		value,
     		aspect,
+    		things,
     		id,
     		colors,
     		$things
     	});
 
     	$$self.$inject_state = $$props => {
-    		if ("color" in $$props) $$invalidate(0, color = $$props.color);
-    		if ("label" in $$props) $$invalidate(1, label = $$props.label);
-    		if ("value" in $$props) $$invalidate(2, value = $$props.value);
-    		if ("aspect" in $$props) $$invalidate(3, aspect = $$props.aspect);
-    		if ("id" in $$props) $$invalidate(4, id = $$props.id);
+    		if ("color" in $$props) $$invalidate(1, color = $$props.color);
+    		if ("label" in $$props) $$invalidate(2, label = $$props.label);
+    		if ("value" in $$props) $$invalidate(3, value = $$props.value);
+    		if ("aspect" in $$props) $$invalidate(4, aspect = $$props.aspect);
+    		if ("things" in $$props) $$invalidate(0, things = $$props.things);
+    		if ("id" in $$props) $$invalidate(5, id = $$props.id);
     		if ("colors" in $$props) colors = $$props.colors;
     	};
 
@@ -1330,7 +1333,7 @@ var app = (function () {
     		$$self.$inject_state($$props.$$inject);
     	}
 
-    	return [color, label, value, aspect, id];
+    	return [things, color, label, value, aspect, id];
     }
 
     class Thing extends SvelteComponentDev {
@@ -1338,11 +1341,11 @@ var app = (function () {
     		super(options);
 
     		init(this, options, instance$1, create_fragment$1, safe_not_equal, {
-    			color: 0,
-    			label: 1,
-    			value: 2,
-    			aspect: 3,
-    			id: 4
+    			color: 1,
+    			label: 2,
+    			value: 3,
+    			aspect: 4,
+    			id: 5
     		});
 
     		dispatch_dev("SvelteRegisterComponent", {
@@ -2139,13 +2142,13 @@ var app = (function () {
 
     function add_css$2() {
     	var style = element("style");
-    	style.id = "svelte-182y4ro-style";
-    	style.textContent = ".container.svelte-182y4ro{height:800px}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiRGVtby5zdmVsdGUiLCJzb3VyY2VzIjpbIkRlbW8uc3ZlbHRlIl0sInNvdXJjZXNDb250ZW50IjpbIjxzY3JpcHQ+XG4gIGltcG9ydCB7IFNjYWxlLCBUaGluZyB9IGZyb20gJy4vc3JjJ1xuICBpbXBvcnQgeyBIb3Jpem9udGFsIH0gZnJvbSAnL1VzZXJzL3NwZW5jZXIvbW91bnRhaW4vc29tZWhvdy1zbGlkZXIvc3JjL2luZGV4Lm1qcydcbiAgbGV0IGxlZnQgPSAxMjBcbiAgbGV0IHJpZ2h0ID0gNTBcbiAgbGV0IGhlaWdodCA9IDUwMFxuICBzZXRUaW1lb3V0KCgpID0+IHtcbiAgICBsZWZ0ID0gNzAwXG4gIH0sIDE1MDApXG4gIGxldCB2YWwgPSAzMDBcbjwvc2NyaXB0PlxuXG48c3R5bGU+XG4gIC5jb250YWluZXIge1xuICAgIGhlaWdodDogODAwcHg7XG4gIH1cbjwvc3R5bGU+XG5cbjxkaXYgY2xhc3M9XCJtYWluIG00XCI+XG4gIDxoMj5zb21laG93LXNjYWxlPC9oMj5cbiAgPGRpdj5cbiAgICBhIHN2ZWx0ZSBpbmZvZ3JhcGhpYyBjb21wb25lbnQgLVxuICAgIDxhIGhyZWY9XCJodHRwczovL2dpdGh1Yi5jb20vc3BlbmNlcm1vdW50YWluL3NvbWVob3ctc2NhbGVcIiBjbGFzcz1cIm00XCI+Z2l0aHViPC9hPlxuICA8L2Rpdj5cbiAgPGRpdiBjbGFzcz1cIm10NCBjb250YWluZXJcIj5cbiAgICA8SG9yaXpvbnRhbCBtaW49ezEwMH0gbWF4PXsxNzAwfSBiaW5kOnZhbHVlPXtyaWdodH0gLz5cbiAgICA8U2NhbGUgaGVpZ2h0PXt2YWx9PlxuICAgICAgPFRoaW5nIGNvbG9yPVwiYmx1ZVwiIGJpbmQ6dmFsdWU9e2xlZnR9IGxhYmVsPVwic21hbGwgYmx1ZVwiIC8+XG4gICAgICA8VGhpbmcgY29sb3I9XCJncmVlblwiIHZhbHVlPXtyaWdodH0gbGFiZWw9XCJtZWRpdW0gZ3JlZW5cIiAvPlxuICAgIDwvU2NhbGU+XG4gIDwvZGl2PlxuPC9kaXY+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBYUUsVUFBVSxlQUFDLENBQUMsQUFDVixNQUFNLENBQUUsS0FBSyxBQUNmLENBQUMifQ== */";
+    	style.id = "svelte-4yct1l-style";
+    	style.textContent = ".mt4.svelte-4yct1l{margin-top:8rem}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiRGVtby5zdmVsdGUiLCJzb3VyY2VzIjpbIkRlbW8uc3ZlbHRlIl0sInNvdXJjZXNDb250ZW50IjpbIjxzY3JpcHQ+XG4gIGltcG9ydCB7IFNjYWxlLCBUaGluZyB9IGZyb20gJy4vc3JjJ1xuICBpbXBvcnQgeyBIb3Jpem9udGFsIH0gZnJvbSAnL1VzZXJzL3NwZW5jZXIvbW91bnRhaW4vc29tZWhvdy1zbGlkZXIvc3JjL2luZGV4Lm1qcydcbiAgbGV0IGxlZnQgPSAxMjBcbiAgbGV0IHJpZ2h0ID0gNTBcbiAgbGV0IGhlaWdodCA9IDUwMFxuICBzZXRUaW1lb3V0KCgpID0+IHtcbiAgICBsZWZ0ID0gNzAwXG4gIH0sIDE1MDApXG4gIGxldCB2YWwgPSAzMDBcbjwvc2NyaXB0PlxuXG48c3R5bGU+XG4gIC5tdDQge1xuICAgIG1hcmdpbi10b3A6IDhyZW07XG4gIH1cbjwvc3R5bGU+XG5cbjxkaXYgY2xhc3M9XCJtYWluIG00XCI+XG4gIDxoMj5zb21laG93LXNjYWxlPC9oMj5cbiAgPGRpdj5cbiAgICBhIHN2ZWx0ZSBpbmZvZ3JhcGhpYyBjb21wb25lbnQgLVxuICAgIDxhIGhyZWY9XCJodHRwczovL2dpdGh1Yi5jb20vc3BlbmNlcm1vdW50YWluL3NvbWVob3ctc2NhbGVcIiBjbGFzcz1cIm00XCI+Z2l0aHViPC9hPlxuICA8L2Rpdj5cbiAgPGRpdiBjbGFzcz1cIm10NFwiPlxuICAgIDxIb3Jpem9udGFsIG1pbj17MTAwfSBtYXg9ezE3MDB9IGJpbmQ6dmFsdWU9e3JpZ2h0fSAvPlxuICAgIDxTY2FsZSBoZWlnaHQ9e3ZhbH0+XG4gICAgICA8VGhpbmcgY29sb3I9XCJibHVlXCIgYmluZDp2YWx1ZT17bGVmdH0gbGFiZWw9XCJzbWFsbCBibHVlXCIgLz5cbiAgICAgIDxUaGluZyBjb2xvcj1cImdyZWVuXCIgdmFsdWU9e3JpZ2h0fSBsYWJlbD1cIm1lZGl1bSBncmVlblwiIC8+XG4gICAgPC9TY2FsZT5cbiAgPC9kaXY+XG5cbiAgPGRpdiBjbGFzcz1cIm10NFwiPlxuICAgIDxIb3Jpem9udGFsIG1pbj17MTAwfSBtYXg9ezE3MDB9IHZhbHVlPXs4MH0gLz5cbiAgICA8U2NhbGUgaGVpZ2h0PXt2YWx9PlxuICAgICAgPFRoaW5nIGNvbG9yPVwicmVkXCIgdmFsdWU9ezIyfSBsYWJlbD1cIjJuZCByZWRcIiAvPlxuICAgICAgPFRoaW5nIGNvbG9yPVwiZ3JlZW5cIiB2YWx1ZT17Mzh9IGxhYmVsPVwibWVkaXVtIGdyZWVuXCIgLz5cbiAgICAgIDxUaGluZyBjb2xvcj1cIm11ZFwiIHZhbHVlPXsxOH0gbGFiZWw9XCJtdWRcIiAvPlxuICAgIDwvU2NhbGU+XG4gIDwvZGl2PlxuPC9kaXY+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBYUUsSUFBSSxjQUFDLENBQUMsQUFDSixVQUFVLENBQUUsSUFBSSxBQUNsQixDQUFDIn0= */";
     	append_dev(document.head, style);
     }
 
     // (27:4) <Scale height={val}>
-    function create_default_slot(ctx) {
+    function create_default_slot_1(ctx) {
     	let thing0;
     	let updating_value;
     	let t;
@@ -2220,7 +2223,7 @@ var app = (function () {
 
     	dispatch_dev("SvelteRegisterBlock", {
     		block,
-    		id: create_default_slot.name,
+    		id: create_default_slot_1.name,
     		type: "slot",
     		source: "(27:4) <Scale height={val}>",
     		ctx
@@ -2229,8 +2232,90 @@ var app = (function () {
     	return block;
     }
 
+    // (35:4) <Scale height={val}>
+    function create_default_slot(ctx) {
+    	let thing0;
+    	let t0;
+    	let thing1;
+    	let t1;
+    	let thing2;
+    	let current;
+
+    	thing0 = new Thing({
+    			props: {
+    				color: "red",
+    				value: 22,
+    				label: "2nd red"
+    			},
+    			$$inline: true
+    		});
+
+    	thing1 = new Thing({
+    			props: {
+    				color: "green",
+    				value: 38,
+    				label: "medium green"
+    			},
+    			$$inline: true
+    		});
+
+    	thing2 = new Thing({
+    			props: { color: "mud", value: 18, label: "mud" },
+    			$$inline: true
+    		});
+
+    	const block = {
+    		c: function create() {
+    			create_component(thing0.$$.fragment);
+    			t0 = space();
+    			create_component(thing1.$$.fragment);
+    			t1 = space();
+    			create_component(thing2.$$.fragment);
+    		},
+    		m: function mount(target, anchor) {
+    			mount_component(thing0, target, anchor);
+    			insert_dev(target, t0, anchor);
+    			mount_component(thing1, target, anchor);
+    			insert_dev(target, t1, anchor);
+    			mount_component(thing2, target, anchor);
+    			current = true;
+    		},
+    		p: noop,
+    		i: function intro(local) {
+    			if (current) return;
+    			transition_in(thing0.$$.fragment, local);
+    			transition_in(thing1.$$.fragment, local);
+    			transition_in(thing2.$$.fragment, local);
+    			current = true;
+    		},
+    		o: function outro(local) {
+    			transition_out(thing0.$$.fragment, local);
+    			transition_out(thing1.$$.fragment, local);
+    			transition_out(thing2.$$.fragment, local);
+    			current = false;
+    		},
+    		d: function destroy(detaching) {
+    			destroy_component(thing0, detaching);
+    			if (detaching) detach_dev(t0);
+    			destroy_component(thing1, detaching);
+    			if (detaching) detach_dev(t1);
+    			destroy_component(thing2, detaching);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_default_slot.name,
+    		type: "slot",
+    		source: "(35:4) <Scale height={val}>",
+    		ctx
+    	});
+
+    	return block;
+    }
+
     function create_fragment$3(ctx) {
-    	let div2;
+    	let div3;
     	let h2;
     	let t1;
     	let div0;
@@ -2238,26 +2323,45 @@ var app = (function () {
     	let a;
     	let t4;
     	let div1;
-    	let horizontal;
+    	let horizontal0;
     	let updating_value;
     	let t5;
-    	let scale;
+    	let scale0;
+    	let t6;
+    	let div2;
+    	let horizontal1;
+    	let t7;
+    	let scale1;
     	let current;
 
-    	function horizontal_value_binding(value) {
-    		/*horizontal_value_binding*/ ctx[3].call(null, value);
+    	function horizontal0_value_binding(value) {
+    		/*horizontal0_value_binding*/ ctx[3].call(null, value);
     	}
 
-    	let horizontal_props = { min: 100, max: 1700 };
+    	let horizontal0_props = { min: 100, max: 1700 };
 
     	if (/*right*/ ctx[1] !== void 0) {
-    		horizontal_props.value = /*right*/ ctx[1];
+    		horizontal0_props.value = /*right*/ ctx[1];
     	}
 
-    	horizontal = new Horizontal({ props: horizontal_props, $$inline: true });
-    	binding_callbacks.push(() => bind(horizontal, "value", horizontal_value_binding));
+    	horizontal0 = new Horizontal({ props: horizontal0_props, $$inline: true });
+    	binding_callbacks.push(() => bind(horizontal0, "value", horizontal0_value_binding));
 
-    	scale = new Scale({
+    	scale0 = new Scale({
+    			props: {
+    				height: /*val*/ ctx[2],
+    				$$slots: { default: [create_default_slot_1] },
+    				$$scope: { ctx }
+    			},
+    			$$inline: true
+    		});
+
+    	horizontal1 = new Horizontal({
+    			props: { min: 100, max: 1700, value: 80 },
+    			$$inline: true
+    		});
+
+    	scale1 = new Scale({
     			props: {
     				height: /*val*/ ctx[2],
     				$$slots: { default: [create_default_slot] },
@@ -2268,7 +2372,7 @@ var app = (function () {
 
     	const block = {
     		c: function create() {
-    			div2 = element("div");
+    			div3 = element("div");
     			h2 = element("h2");
     			h2.textContent = "somehow-scale";
     			t1 = space();
@@ -2278,69 +2382,94 @@ var app = (function () {
     			a.textContent = "github";
     			t4 = space();
     			div1 = element("div");
-    			create_component(horizontal.$$.fragment);
+    			create_component(horizontal0.$$.fragment);
     			t5 = space();
-    			create_component(scale.$$.fragment);
-    			add_location(h2, file$2, 19, 2, 339);
+    			create_component(scale0.$$.fragment);
+    			t6 = space();
+    			div2 = element("div");
+    			create_component(horizontal1.$$.fragment);
+    			t7 = space();
+    			create_component(scale1.$$.fragment);
+    			add_location(h2, file$2, 19, 2, 336);
     			attr_dev(a, "href", "https://github.com/spencermountain/somehow-scale");
     			attr_dev(a, "class", "m4");
-    			add_location(a, file$2, 22, 4, 411);
-    			add_location(div0, file$2, 20, 2, 364);
-    			attr_dev(div1, "class", "mt4 container svelte-182y4ro");
-    			add_location(div1, file$2, 24, 2, 503);
-    			attr_dev(div2, "class", "main m4");
-    			add_location(div2, file$2, 18, 0, 315);
+    			add_location(a, file$2, 22, 4, 408);
+    			add_location(div0, file$2, 20, 2, 361);
+    			attr_dev(div1, "class", "mt4 svelte-4yct1l");
+    			add_location(div1, file$2, 24, 2, 500);
+    			attr_dev(div2, "class", "mt4 svelte-4yct1l");
+    			add_location(div2, file$2, 32, 2, 758);
+    			attr_dev(div3, "class", "main m4");
+    			add_location(div3, file$2, 18, 0, 312);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
     		},
     		m: function mount(target, anchor) {
-    			insert_dev(target, div2, anchor);
-    			append_dev(div2, h2);
-    			append_dev(div2, t1);
-    			append_dev(div2, div0);
+    			insert_dev(target, div3, anchor);
+    			append_dev(div3, h2);
+    			append_dev(div3, t1);
+    			append_dev(div3, div0);
     			append_dev(div0, t2);
     			append_dev(div0, a);
-    			append_dev(div2, t4);
-    			append_dev(div2, div1);
-    			mount_component(horizontal, div1, null);
+    			append_dev(div3, t4);
+    			append_dev(div3, div1);
+    			mount_component(horizontal0, div1, null);
     			append_dev(div1, t5);
-    			mount_component(scale, div1, null);
+    			mount_component(scale0, div1, null);
+    			append_dev(div3, t6);
+    			append_dev(div3, div2);
+    			mount_component(horizontal1, div2, null);
+    			append_dev(div2, t7);
+    			mount_component(scale1, div2, null);
     			current = true;
     		},
     		p: function update(ctx, [dirty]) {
-    			const horizontal_changes = {};
+    			const horizontal0_changes = {};
 
     			if (!updating_value && dirty & /*right*/ 2) {
     				updating_value = true;
-    				horizontal_changes.value = /*right*/ ctx[1];
+    				horizontal0_changes.value = /*right*/ ctx[1];
     				add_flush_callback(() => updating_value = false);
     			}
 
-    			horizontal.$set(horizontal_changes);
-    			const scale_changes = {};
+    			horizontal0.$set(horizontal0_changes);
+    			const scale0_changes = {};
 
     			if (dirty & /*$$scope, right, left*/ 67) {
-    				scale_changes.$$scope = { dirty, ctx };
+    				scale0_changes.$$scope = { dirty, ctx };
     			}
 
-    			scale.$set(scale_changes);
+    			scale0.$set(scale0_changes);
+    			const scale1_changes = {};
+
+    			if (dirty & /*$$scope*/ 64) {
+    				scale1_changes.$$scope = { dirty, ctx };
+    			}
+
+    			scale1.$set(scale1_changes);
     		},
     		i: function intro(local) {
     			if (current) return;
-    			transition_in(horizontal.$$.fragment, local);
-    			transition_in(scale.$$.fragment, local);
+    			transition_in(horizontal0.$$.fragment, local);
+    			transition_in(scale0.$$.fragment, local);
+    			transition_in(horizontal1.$$.fragment, local);
+    			transition_in(scale1.$$.fragment, local);
     			current = true;
     		},
     		o: function outro(local) {
-    			transition_out(horizontal.$$.fragment, local);
-    			transition_out(scale.$$.fragment, local);
+    			transition_out(horizontal0.$$.fragment, local);
+    			transition_out(scale0.$$.fragment, local);
+    			transition_out(horizontal1.$$.fragment, local);
+    			transition_out(scale1.$$.fragment, local);
     			current = false;
     		},
     		d: function destroy(detaching) {
-    			if (detaching) detach_dev(div2);
-    			destroy_component(horizontal);
-    			destroy_component(scale);
+    			if (detaching) detach_dev(div3);
+    			destroy_component(horizontal0);
+    			destroy_component(scale0);
+    			destroy_component(horizontal1);
+    			destroy_component(scale1);
     		}
     	};
 
@@ -2377,7 +2506,7 @@ var app = (function () {
     	let { $$slots = {}, $$scope } = $$props;
     	validate_slots("Demo", $$slots, []);
 
-    	function horizontal_value_binding(value) {
+    	function horizontal0_value_binding(value) {
     		right = value;
     		$$invalidate(1, right);
     	}
@@ -2408,13 +2537,13 @@ var app = (function () {
     		$$self.$inject_state($$props.$$inject);
     	}
 
-    	return [left, right, val, horizontal_value_binding, thing0_value_binding];
+    	return [left, right, val, horizontal0_value_binding, thing0_value_binding];
     }
 
     class Demo extends SvelteComponentDev {
     	constructor(options) {
     		super(options);
-    		if (!document.getElementById("svelte-182y4ro-style")) add_css$2();
+    		if (!document.getElementById("svelte-4yct1l-style")) add_css$2();
     		init(this, options, instance$3, create_fragment$3, safe_not_equal, {});
 
     		dispatch_dev("SvelteRegisterComponent", {

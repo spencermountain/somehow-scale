@@ -1,5 +1,3 @@
-// const ratio = 0.61803
-
 const fmt = function (num) {
   const round = (x) => Math.round(x * 10) / 10
   const decimal = (x) => String(round(x % 1)).replace(/^0/, '')
@@ -29,7 +27,6 @@ const layout = function (arr) {
   arr.forEach((o) => {
     let percentage = (o.value / max) * 100
     o.height = percentage
-    // o.width = percentage * ratio
     o.percentage = parseInt(percentage, 10)
     o.height = o.percentage
     o.width = '100%'

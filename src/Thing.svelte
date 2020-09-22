@@ -1,5 +1,5 @@
 <script>
-  import { things } from './store'
+  import { getContext } from 'svelte'
   import { afterUpdate } from 'svelte'
   import c from 'spencer-color'
   import uuid from './uuid'
@@ -8,6 +8,7 @@
   export let label = ''
   export let value = 0
   export let aspect = ''
+  let things = getContext('things')
   export let id = uuid()
 
   let colors = c.colors
@@ -23,7 +24,9 @@
   afterUpdate(() => {
     things.update(arr => {
       let o = arr.find(o => o.id === id)
-      o.value = value
+      if (o) {
+        o.value = value
+      }
       return arr
     })
   })
