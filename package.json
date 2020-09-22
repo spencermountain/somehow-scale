@@ -1,7 +1,7 @@
 {
   "name": "somehow-scale",
   "description": "svelte infographic component",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "main": "src/index.mjs",
   "author": "Spencer Kelly (spencermountain)",
   "homepage": "https://github.com/spencermountain/",
@@ -19,6 +19,7 @@
     "printWidth": 100
   },
   "dependencies": {
+    "fit-aspect-ratio": "^2.1.1",
     "spencer-color": "^0.1.0"
   },
   "devDependencies": {

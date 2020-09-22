@@ -3,6 +3,7 @@
   export let color = 'steelblue'
   export let label = ''
   export let value = 0
+  export let aspect = ''
 
   import c from 'spencer-color'
   let colors = c.colors
@@ -10,6 +11,7 @@
 
   $things.push({
     color: color,
+    aspect: aspect,
     value: Number(value),
     label: label
   })
