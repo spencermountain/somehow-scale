@@ -117,7 +117,7 @@
     /* flex: 1; */
     display: flex;
     box-sizing: border-box;
-    padding: 10px;
+    padding: 2%;
     justify-content: flex-end;
     align-items: flex-end;
     border-radius: 2px;

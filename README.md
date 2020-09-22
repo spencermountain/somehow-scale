@@ -23,10 +23,16 @@ WIP responsive proportion infographic component
 <script>
   import { Scale, Thing } from 'somehow-scale'
 </script>
+
 <Scale>
-  <Thing color="blue" value="19" />
-  <Thing color="green" value="10" label="green label" />
+  <Thing color="blue" value="200" label="small blue" />
+  <Thing color="blue" value="2500" label="medium blue" />
+  <Thing color="green" value="5000" label="big green" />
 </Scale>
 ```
+
+![image](https://user-images.githubusercontent.com/399657/93920751-99692c00-fcdd-11ea-9683-fbe47dbe6d54.png)
+
+unlike in a bar-chart, small values will be sub-divided vertically, so they are properly visible.
 
 MIT
