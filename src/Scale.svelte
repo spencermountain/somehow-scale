@@ -78,8 +78,9 @@
     align-self: center;
     display: flex;
     flex-direction: row;
-    justify-content: center;
+    justify-content: flex-end;
     flex-wrap: nowrap;
+    /* border-bottom: 1px dashed lightgrey; */
   }
   .axis {
     width: 6px;
@@ -108,15 +109,28 @@
     font-size: 12px;
     width: 40px;
   }
+  .inside {
+    color: #fbfbfb;
+  }
   .bar {
-    min-width: 100px;
-    flex: 1;
-    height: 100%;
+    /* min-width: 100px; */
+    /* flex: 1; */
+    display: flex;
+    box-sizing: border-box;
+    padding: 10px;
+    justify-content: flex-end;
+    align-items: flex-end;
     border-radius: 2px;
     box-shadow: 2px 2px 8px 0px rgba(0, 0, 0, 0.2);
   }
   .bar:hover {
     box-shadow: 2px 2px 8px 0px steelblue;
+  }
+  .ghost {
+    height: 100%;
+    width: 25%;
+    /* border-radius: 3px; */
+    /* border: 1px dotted lightgrey; */
   }
 </style>
 
@@ -129,10 +143,23 @@
         <span class="num">{bar.fmt[0]}</span>
         <span class="unit">{bar.fmt[2] || ''}</span>
       </div>
-      <div class="sized" style="height:{bar.height}%;">
-        <div class="bar" style="background-color:{bar.color}; " />
+      <div class="sized" style="height:{bar.height}%; ">
+        {#if bar.rescaled}
+          <div class="ghost" />
+          <div class="ghost" />
+          <div class="ghost" />
+        {/if}
+        <div
+          class="bar"
+          style="background-color:{bar.color}; width:{bar.width}; max-width:{bar.width};
+          height:100%;">
+          {#if bar.rescaled}
+            <div class="inside">{bar.percentage !== 100 ? bar.percentage + '%' : ''}</div>
+          {/if}
+        </div>
+
         <div class="beside">
-          {#if bar.percentage !== 100}
+          {#if bar.percentage !== 100 && bar.rescaled !== true}
             <div class="axis" />
             <div class="percent">{bar.percentage !== 100 ? bar.percentage + '%' : ''}</div>
           {/if}

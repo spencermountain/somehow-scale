@@ -31,6 +31,13 @@ const layout = function (arr) {
     o.height = percentage
     // o.width = percentage * ratio
     o.percentage = parseInt(percentage, 10)
+    o.height = o.percentage
+    o.width = '100%'
+    if (o.percentage <= 5) {
+      o.width = '25%'
+      o.rescaled = true
+      o.height = o.percentage * 4
+    }
     o.fmt = fmt(o.value)
   })
   return arr
