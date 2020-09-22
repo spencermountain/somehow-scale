@@ -1,10 +1,17 @@
 <script>
   import { Scale, Thing } from './src'
+  import { Horizontal } from '/Users/spencer/mountain/somehow-slider/src/index.mjs'
+  let left = 120
+  let right = 50
+  let height = 500
+  setTimeout(() => {
+    left = 700
+  }, 1500)
+  let val = 300
 </script>
 
 <style>
   .container {
-    /* border: 1px solid grey; */
     height: 800px;
   }
 </style>
@@ -16,10 +23,10 @@
     <a href="https://github.com/spencermountain/somehow-scale" class="m4">github</a>
   </div>
   <div class="mt4 container">
-    <Scale>
-      <Thing color="blue" value="200" label="small blue" />
-      <Thing color="blue" value="2500" label="medium blue" />
-      <Thing color="green" value="5000" label="big green" />
+    <Horizontal min={100} max={1700} bind:value={right} />
+    <Scale height={val}>
+      <Thing color="blue" bind:value={left} label="small blue" />
+      <Thing color="green" value={right} label="medium green" />
     </Scale>
   </div>
 </div>

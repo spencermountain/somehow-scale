@@ -1,13 +1,11 @@
 <script>
   import { setContext, onMount } from 'svelte'
   import { things } from './store'
+  import { tweened } from 'svelte/motion'
   import layout from './layout'
   export let height = 400
-
-  let arr = []
-  onMount(() => {
-    arr = layout($things, height)
-  })
+  $: h = height
+  $: arr = layout($things, h)
 </script>
 
 <style>
@@ -117,7 +115,7 @@
     /* flex: 1; */
     display: flex;
     box-sizing: border-box;
-    padding: 2%;
+    /* padding: 2%; */
     justify-content: flex-end;
     align-items: flex-end;
     border-radius: 2px;
@@ -134,8 +132,8 @@
   }
 </style>
 
-<div class="container" style="min-height:{height}px;">
-
+<!-- <pre>{JSON.stringify(arr, null, 2)}</pre> -->
+<div class="container" style="height:{h}px;">
   {#each arr as bar}
     <div class="box">
       <!-- top number -->
@@ -153,7 +151,7 @@
           class="bar"
           style="background-color:{bar.color}; width:{bar.width}; max-width:{bar.width};
           height:100%;">
-          {#if bar.rescaled}
+          {#if bar.rescaled && bar.percentage !== 0}
             <div class="inside">{bar.percentage !== 100 ? bar.percentage + '%' : ''}</div>
           {/if}
         </div>

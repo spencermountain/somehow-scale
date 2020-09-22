@@ -4,6 +4,7 @@ var app = (function () {
     'use strict';
 
     function noop() { }
+    const identity = x => x;
     function assign(tar, src) {
         // @ts-ignore
         for (const k in src)
@@ -85,6 +86,41 @@ var app = (function () {
         }
     }
 
+    const is_client = typeof window !== 'undefined';
+    let now = is_client
+        ? () => window.performance.now()
+        : () => Date.now();
+    let raf = is_client ? cb => requestAnimationFrame(cb) : noop;
+
+    const tasks = new Set();
+    function run_tasks(now) {
+        tasks.forEach(task => {
+            if (!task.c(now)) {
+                tasks.delete(task);
+                task.f();
+            }
+        });
+        if (tasks.size !== 0)
+            raf(run_tasks);
+    }
+    /**
+     * Creates a new task that runs on each raf frame
+     * until it returns a falsy value or is aborted
+     */
+    function loop(callback) {
+        let task;
+        if (tasks.size === 0)
+            raf(run_tasks);
+        return {
+            promise: new Promise(fulfill => {
+                tasks.add(task = { c: callback, f: fulfill });
+            }),
+            abort() {
+                tasks.delete(task);
+            }
+        };
+    }
+
     function append(target, node) {
         target.appendChild(node);
     }
@@ -108,6 +144,10 @@ var app = (function () {
     }
     function space() {
         return text(' ');
+    }
+    function listen(node, event, handler, options) {
+        node.addEventListener(event, handler, options);
+        return () => node.removeEventListener(event, handler, options);
     }
     function attr(node, attribute, value) {
         if (value == null)
@@ -139,6 +179,9 @@ var app = (function () {
     function onMount(fn) {
         get_current_component().$$.on_mount.push(fn);
     }
+    function afterUpdate(fn) {
+        get_current_component().$$.after_update.push(fn);
+    }
     function setContext(key, context) {
         get_current_component().$$.context.set(key, context);
     }
@@ -157,6 +200,9 @@ var app = (function () {
     }
     function add_render_callback(fn) {
         render_callbacks.push(fn);
+    }
+    function add_flush_callback(fn) {
+        flush_callbacks.push(fn);
     }
     let flushing = false;
     const seen_callbacks = new Set();
@@ -227,6 +273,14 @@ var app = (function () {
                 }
             });
             block.o(local);
+        }
+    }
+
+    function bind(component, name, callback) {
+        const index = component.$$.props[name];
+        if (index !== undefined) {
+            component.$$.bound[index] = callback;
+            callback(component.$$.ctx[index]);
         }
     }
     function create_component(block) {
@@ -366,6 +420,19 @@ var app = (function () {
         dispatch_dev("SvelteDOMRemove", { node });
         detach(node);
     }
+    function listen_dev(node, event, handler, options, has_prevent_default, has_stop_propagation) {
+        const modifiers = options === true ? ["capture"] : options ? Array.from(Object.keys(options)) : [];
+        if (has_prevent_default)
+            modifiers.push('preventDefault');
+        if (has_stop_propagation)
+            modifiers.push('stopPropagation');
+        dispatch_dev("SvelteDOMAddEventListener", { node, event, handler, modifiers });
+        const dispose = listen(node, event, handler, options);
+        return () => {
+            dispatch_dev("SvelteDOMRemoveEventListener", { node, event, handler, modifiers });
+            dispose();
+        };
+    }
     function attr_dev(node, attribute, value) {
         attr(node, attribute, value);
         if (value == null)
@@ -466,6 +533,106 @@ var app = (function () {
     }
 
     const things = writable([]);
+    // export const h = writable(400)
+
+    function is_date(obj) {
+        return Object.prototype.toString.call(obj) === '[object Date]';
+    }
+
+    function get_interpolator(a, b) {
+        if (a === b || a !== a)
+            return () => a;
+        const type = typeof a;
+        if (type !== typeof b || Array.isArray(a) !== Array.isArray(b)) {
+            throw new Error('Cannot interpolate values of different type');
+        }
+        if (Array.isArray(a)) {
+            const arr = b.map((bi, i) => {
+                return get_interpolator(a[i], bi);
+            });
+            return t => arr.map(fn => fn(t));
+        }
+        if (type === 'object') {
+            if (!a || !b)
+                throw new Error('Object cannot be null');
+            if (is_date(a) && is_date(b)) {
+                a = a.getTime();
+                b = b.getTime();
+                const delta = b - a;
+                return t => new Date(a + t * delta);
+            }
+            const keys = Object.keys(b);
+            const interpolators = {};
+            keys.forEach(key => {
+                interpolators[key] = get_interpolator(a[key], b[key]);
+            });
+            return t => {
+                const result = {};
+                keys.forEach(key => {
+                    result[key] = interpolators[key](t);
+                });
+                return result;
+            };
+        }
+        if (type === 'number') {
+            const delta = b - a;
+            return t => a + t * delta;
+        }
+        throw new Error(`Cannot interpolate ${type} values`);
+    }
+    function tweened(value, defaults = {}) {
+        const store = writable(value);
+        let task;
+        let target_value = value;
+        function set(new_value, opts) {
+            if (value == null) {
+                store.set(value = new_value);
+                return Promise.resolve();
+            }
+            target_value = new_value;
+            let previous_task = task;
+            let started = false;
+            let { delay = 0, duration = 400, easing = identity, interpolate = get_interpolator } = assign(assign({}, defaults), opts);
+            if (duration === 0) {
+                if (previous_task) {
+                    previous_task.abort();
+                    previous_task = null;
+                }
+                store.set(value = target_value);
+                return Promise.resolve();
+            }
+            const start = now() + delay;
+            let fn;
+            task = loop(now => {
+                if (now < start)
+                    return true;
+                if (!started) {
+                    fn = interpolate(value, new_value);
+                    if (typeof duration === 'function')
+                        duration = duration(value, new_value);
+                    started = true;
+                }
+                if (previous_task) {
+                    previous_task.abort();
+                    previous_task = null;
+                }
+                const elapsed = now - start;
+                if (elapsed > duration) {
+                    store.set(value = new_value);
+                    return false;
+                }
+                // @ts-ignore
+                store.set(value = fn(easing(elapsed / duration)));
+                return true;
+            });
+            return task.promise;
+        }
+        return {
+            set,
+            update: (fn, opts) => set(fn(target_value, value), opts),
+            subscribe: store.subscribe
+        };
+    }
 
     // const ratio = 0.61803
 
@@ -506,6 +673,9 @@ var app = (function () {
           o.width = '25%';
           o.rescaled = true;
           o.height = o.percentage * 4;
+          if (o.percentage <= 0) {
+            o.height = 0;
+          }
         }
         o.fmt = fmt(o.value);
       });
@@ -517,18 +687,18 @@ var app = (function () {
 
     function add_css() {
     	var style = element("style");
-    	style.id = "svelte-1ic7itr-style";
-    	style.textContent = ".container.svelte-1ic7itr{height:100%;position:relative;width:100%;display:flex;flex-direction:row;justify-content:space-around;align-items:center;text-align:center;flex-wrap:nowrap;align-self:stretch}.box.svelte-1ic7itr{position:relative;box-sizing:border-box;padding:10px;display:flex;height:100%;flex:1;flex-direction:column;justify-content:flex-end;align-items:flex-end}.label.svelte-1ic7itr{position:relative;color:#b3b7ba;max-width:200px;font-size:11px;margin-top:4px;text-align:right;margin-right:45px}.value.svelte-1ic7itr{position:relative;color:#949a9e;font-size:20px;margin:7px;opacity:0.8;margin-right:45px;justify-content:center;display:flex;align-items:first baseline}.num.svelte-1ic7itr{opacity:1}.unit.svelte-1ic7itr{font-size:12px;margin-left:1px;color:#949a9e}.sized.svelte-1ic7itr{position:relative;width:100%;align-self:center;display:flex;flex-direction:row;justify-content:flex-end;flex-wrap:nowrap}.axis.svelte-1ic7itr{width:6px;margin-left:7px;border-left:1px dashed lightgrey;border-top:1px dashed lightgrey;border-bottom:1px dashed lightgrey;height:100%}.beside.svelte-1ic7itr{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;position:relative;margin-left:5px;box-sizing:border-box;padding-top:12px;padding-bottom:12px;height:100%;width:45px}.percent.svelte-1ic7itr{color:#b3b7ba;font-size:12px;width:40px}.inside.svelte-1ic7itr{color:#fbfbfb}.bar.svelte-1ic7itr{display:flex;box-sizing:border-box;padding:2%;justify-content:flex-end;align-items:flex-end;border-radius:2px;box-shadow:2px 2px 8px 0px rgba(0, 0, 0, 0.2)}.bar.svelte-1ic7itr:hover{box-shadow:2px 2px 8px 0px steelblue}.ghost.svelte-1ic7itr{height:100%;width:25%}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiU2NhbGUuc3ZlbHRlIiwic291cmNlcyI6WyJTY2FsZS5zdmVsdGUiXSwic291cmNlc0NvbnRlbnQiOlsiPHNjcmlwdD5cbiAgaW1wb3J0IHsgc2V0Q29udGV4dCwgb25Nb3VudCB9IGZyb20gJ3N2ZWx0ZSdcbiAgaW1wb3J0IHsgdGhpbmdzIH0gZnJvbSAnLi9zdG9yZSdcbiAgaW1wb3J0IGxheW91dCBmcm9tICcuL2xheW91dCdcbiAgZXhwb3J0IGxldCBoZWlnaHQgPSA0MDBcblxuICBsZXQgYXJyID0gW11cbiAgb25Nb3VudCgoKSA9PiB7XG4gICAgYXJyID0gbGF5b3V0KCR0aGluZ3MsIGhlaWdodClcbiAgfSlcbjwvc2NyaXB0PlxuXG48c3R5bGU+XG4gIC5jb250YWluZXIge1xuICAgIGhlaWdodDogMTAwJTtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgd2lkdGg6IDEwMCU7XG4gICAgZGlzcGxheTogZmxleDtcbiAgICBmbGV4LWRpcmVjdGlvbjogcm93O1xuICAgIGp1c3RpZnktY29udGVudDogc3BhY2UtYXJvdW5kO1xuICAgIGFsaWduLWl0ZW1zOiBjZW50ZXI7XG4gICAgdGV4dC1hbGlnbjogY2VudGVyO1xuICAgIGZsZXgtd3JhcDogbm93cmFwO1xuICAgIGFsaWduLXNlbGY6IHN0cmV0Y2g7XG4gIH1cblxuICAuYm94IHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgYm94LXNpemluZzogYm9yZGVyLWJveDtcbiAgICBwYWRkaW5nOiAxMHB4O1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgaGVpZ2h0OiAxMDAlO1xuICAgIGZsZXg6IDE7XG4gICAgZmxleC1kaXJlY3Rpb246IGNvbHVtbjtcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGZsZXgtZW5kO1xuICAgIGFsaWduLWl0ZW1zOiBmbGV4LWVuZDtcbiAgfVxuICAubGFiZWwge1xuICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICBjb2xvcjogI2IzYjdiYTtcbiAgICBtYXgtd2lkdGg6IDIwMHB4O1xuICAgIGZvbnQtc2l6ZTogMTFweDtcbiAgICBtYXJnaW4tdG9wOiA0cHg7XG4gICAgdGV4dC1hbGlnbjogcmlnaHQ7XG4gICAgbWFyZ2luLXJpZ2h0OiA0NXB4O1xuICB9XG4gIC52YWx1ZSB7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIGNvbG9yOiAjOTQ5YTllO1xuICAgIGZvbnQtc2l6ZTogMjBweDtcbiAgICBtYXJnaW46IDdweDtcbiAgICBvcGFjaXR5OiAwLjg7XG4gICAgbWFyZ2luLXJpZ2h0OiA0NXB4O1xuICAgIGp1c3RpZnktY29udGVudDogY2VudGVyO1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgYWxpZ24taXRlbXM6IGZpcnN0IGJhc2VsaW5lO1xuICB9XG4gIC5udW0ge1xuICAgIG9wYWNpdHk6IDE7XG4gIH1cbiAgLnVuaXQge1xuICAgIGZvbnQtc2l6ZTogMTJweDtcbiAgICBtYXJnaW4tbGVmdDogMXB4O1xuICAgIGNvbG9yOiAjOTQ5YTllO1xuICB9XG4gIC8qIC5kZWMge1xuICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICBmb250LXNpemU6IDE0cHg7XG4gICAgY29sb3I6ICM5NDlhOWU7XG4gICAgbWFyZ2luLWxlZnQ6IDFweDtcbiAgICBjb2xvcjogI2IzYjdiYTtcbiAgICB0b3A6IDNweDtcbiAgfSAqL1xuICAvKiB0aGUgYWN0dWFsIGJhciAqL1xuICAuc2l6ZWQge1xuICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICB3aWR0aDogMTAwJTtcbiAgICBhbGlnbi1zZWxmOiBjZW50ZXI7XG4gICAgZGlzcGxheTogZmxleDtcbiAgICBmbGV4LWRpcmVjdGlvbjogcm93O1xuICAgIGp1c3RpZnktY29udGVudDogZmxleC1lbmQ7XG4gICAgZmxleC13cmFwOiBub3dyYXA7XG4gICAgLyogYm9yZGVyLWJvdHRvbTogMXB4IGRhc2hlZCBsaWdodGdyZXk7ICovXG4gIH1cbiAgLmF4aXMge1xuICAgIHdpZHRoOiA2cHg7XG4gICAgbWFyZ2luLWxlZnQ6IDdweDtcbiAgICBib3JkZXItbGVmdDogMXB4IGRhc2hlZCBsaWdodGdyZXk7XG4gICAgYm9yZGVyLXRvcDogMXB4IGRhc2hlZCBsaWdodGdyZXk7XG4gICAgYm9yZGVyLWJvdHRvbTogMXB4IGRhc2hlZCBsaWdodGdyZXk7XG4gICAgaGVpZ2h0OiAxMDAlO1xuICB9XG4gIC5iZXNpZGUge1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgZmxleC1kaXJlY3Rpb246IHJvdztcbiAgICBmbGV4LXdyYXA6IG5vd3JhcDtcbiAgICBhbGlnbi1pdGVtczogY2VudGVyO1xuICAgIGp1c3RpZnktY29udGVudDogZmxleC1zdGFydDtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgbWFyZ2luLWxlZnQ6IDVweDtcbiAgICBib3gtc2l6aW5nOiBib3JkZXItYm94O1xuICAgIHBhZGRpbmctdG9wOiAxMnB4O1xuICAgIHBhZGRpbmctYm90dG9tOiAxMnB4O1xuICAgIGhlaWdodDogMTAwJTtcbiAgICB3aWR0aDogNDVweDtcbiAgfVxuICAucGVyY2VudCB7XG4gICAgY29sb3I6ICNiM2I3YmE7XG4gICAgZm9udC1zaXplOiAxMnB4O1xuICAgIHdpZHRoOiA0MHB4O1xuICB9XG4gIC5pbnNpZGUge1xuICAgIGNvbG9yOiAjZmJmYmZiO1xuICB9XG4gIC5iYXIge1xuICAgIC8qIG1pbi13aWR0aDogMTAwcHg7ICovXG4gICAgLyogZmxleDogMTsgKi9cbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGJveC1zaXppbmc6IGJvcmRlci1ib3g7XG4gICAgcGFkZGluZzogMiU7XG4gICAganVzdGlmeS1jb250ZW50OiBmbGV4LWVuZDtcbiAgICBhbGlnbi1pdGVtczogZmxleC1lbmQ7XG4gICAgYm9yZGVyLXJhZGl1czogMnB4O1xuICAgIGJveC1zaGFkb3c6IDJweCAycHggOHB4IDBweCByZ2JhKDAsIDAsIDAsIDAuMik7XG4gIH1cbiAgLmJhcjpob3ZlciB7XG4gICAgYm94LXNoYWRvdzogMnB4IDJweCA4cHggMHB4IHN0ZWVsYmx1ZTtcbiAgfVxuICAuZ2hvc3Qge1xuICAgIGhlaWdodDogMTAwJTtcbiAgICB3aWR0aDogMjUlO1xuICAgIC8qIGJvcmRlci1yYWRpdXM6IDNweDsgKi9cbiAgICAvKiBib3JkZXI6IDFweCBkb3R0ZWQgbGlnaHRncmV5OyAqL1xuICB9XG48L3N0eWxlPlxuXG48ZGl2IGNsYXNzPVwiY29udGFpbmVyXCIgc3R5bGU9XCJtaW4taGVpZ2h0OntoZWlnaHR9cHg7XCI+XG5cbiAgeyNlYWNoIGFyciBhcyBiYXJ9XG4gICAgPGRpdiBjbGFzcz1cImJveFwiPlxuICAgICAgPCEtLSB0b3AgbnVtYmVyIC0tPlxuICAgICAgPGRpdiBjbGFzcz1cInZhbHVlXCIgc3R5bGU9XCJib3JkZXItYm90dG9tOiAycHggc29saWQge2Jhci5jb2xvcn07XCI+XG4gICAgICAgIDxzcGFuIGNsYXNzPVwibnVtXCI+e2Jhci5mbXRbMF19PC9zcGFuPlxuICAgICAgICA8c3BhbiBjbGFzcz1cInVuaXRcIj57YmFyLmZtdFsyXSB8fCAnJ308L3NwYW4+XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3M9XCJzaXplZFwiIHN0eWxlPVwiaGVpZ2h0OntiYXIuaGVpZ2h0fSU7IFwiPlxuICAgICAgICB7I2lmIGJhci5yZXNjYWxlZH1cbiAgICAgICAgICA8ZGl2IGNsYXNzPVwiZ2hvc3RcIiAvPlxuICAgICAgICAgIDxkaXYgY2xhc3M9XCJnaG9zdFwiIC8+XG4gICAgICAgICAgPGRpdiBjbGFzcz1cImdob3N0XCIgLz5cbiAgICAgICAgey9pZn1cbiAgICAgICAgPGRpdlxuICAgICAgICAgIGNsYXNzPVwiYmFyXCJcbiAgICAgICAgICBzdHlsZT1cImJhY2tncm91bmQtY29sb3I6e2Jhci5jb2xvcn07IHdpZHRoOntiYXIud2lkdGh9OyBtYXgtd2lkdGg6e2Jhci53aWR0aH07XG4gICAgICAgICAgaGVpZ2h0OjEwMCU7XCI+XG4gICAgICAgICAgeyNpZiBiYXIucmVzY2FsZWR9XG4gICAgICAgICAgICA8ZGl2IGNsYXNzPVwiaW5zaWRlXCI+e2Jhci5wZXJjZW50YWdlICE9PSAxMDAgPyBiYXIucGVyY2VudGFnZSArICclJyA6ICcnfTwvZGl2PlxuICAgICAgICAgIHsvaWZ9XG4gICAgICAgIDwvZGl2PlxuXG4gICAgICAgIDxkaXYgY2xhc3M9XCJiZXNpZGVcIj5cbiAgICAgICAgICB7I2lmIGJhci5wZXJjZW50YWdlICE9PSAxMDAgJiYgYmFyLnJlc2NhbGVkICE9PSB0cnVlfVxuICAgICAgICAgICAgPGRpdiBjbGFzcz1cImF4aXNcIiAvPlxuICAgICAgICAgICAgPGRpdiBjbGFzcz1cInBlcmNlbnRcIj57YmFyLnBlcmNlbnRhZ2UgIT09IDEwMCA/IGJhci5wZXJjZW50YWdlICsgJyUnIDogJyd9PC9kaXY+XG4gICAgICAgICAgey9pZn1cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Rpdj5cbiAgICAgIDwhLS0gYm90dG9tIGxhYmVsIC0tPlxuICAgICAgPGRpdiBjbGFzcz1cImxhYmVsXCI+e2Jhci5sYWJlbH08L2Rpdj5cbiAgICA8L2Rpdj5cbiAgey9lYWNofVxuXG48L2Rpdj5cbjxzbG90IC8+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBYUUsVUFBVSxlQUFDLENBQUMsQUFDVixNQUFNLENBQUUsSUFBSSxDQUNaLFFBQVEsQ0FBRSxRQUFRLENBQ2xCLEtBQUssQ0FBRSxJQUFJLENBQ1gsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsR0FBRyxDQUNuQixlQUFlLENBQUUsWUFBWSxDQUM3QixXQUFXLENBQUUsTUFBTSxDQUNuQixVQUFVLENBQUUsTUFBTSxDQUNsQixTQUFTLENBQUUsTUFBTSxDQUNqQixVQUFVLENBQUUsT0FBTyxBQUNyQixDQUFDLEFBRUQsSUFBSSxlQUFDLENBQUMsQUFDSixRQUFRLENBQUUsUUFBUSxDQUNsQixVQUFVLENBQUUsVUFBVSxDQUN0QixPQUFPLENBQUUsSUFBSSxDQUNiLE9BQU8sQ0FBRSxJQUFJLENBQ2IsTUFBTSxDQUFFLElBQUks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 */";
+    	style.id = "svelte-19rgbmb-style";
+    	style.textContent = ".container.svelte-19rgbmb{height:100%;position:relative;width:100%;display:flex;flex-direction:row;justify-content:space-around;align-items:center;text-align:center;flex-wrap:nowrap;align-self:stretch}.box.svelte-19rgbmb{position:relative;box-sizing:border-box;padding:10px;display:flex;height:100%;flex:1;flex-direction:column;justify-content:flex-end;align-items:flex-end}.label.svelte-19rgbmb{position:relative;color:#b3b7ba;max-width:200px;font-size:11px;margin-top:4px;text-align:right;margin-right:45px}.value.svelte-19rgbmb{position:relative;color:#949a9e;font-size:20px;margin:7px;opacity:0.8;margin-right:45px;justify-content:center;display:flex;align-items:first baseline}.num.svelte-19rgbmb{opacity:1}.unit.svelte-19rgbmb{font-size:12px;margin-left:1px;color:#949a9e}.sized.svelte-19rgbmb{position:relative;width:100%;align-self:center;display:flex;flex-direction:row;justify-content:flex-end;flex-wrap:nowrap}.axis.svelte-19rgbmb{width:6px;margin-left:7px;border-left:1px dashed lightgrey;border-top:1px dashed lightgrey;border-bottom:1px dashed lightgrey;height:100%}.beside.svelte-19rgbmb{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:flex-start;position:relative;margin-left:5px;box-sizing:border-box;padding-top:12px;padding-bottom:12px;height:100%;width:45px}.percent.svelte-19rgbmb{color:#b3b7ba;font-size:12px;width:40px}.inside.svelte-19rgbmb{color:#fbfbfb}.bar.svelte-19rgbmb{display:flex;box-sizing:border-box;justify-content:flex-end;align-items:flex-end;border-radius:2px;box-shadow:2px 2px 8px 0px rgba(0, 0, 0, 0.2)}.bar.svelte-19rgbmb:hover{box-shadow:2px 2px 8px 0px steelblue}.ghost.svelte-19rgbmb{height:100%;width:25%}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiU2NhbGUuc3ZlbHRlIiwic291cmNlcyI6WyJTY2FsZS5zdmVsdGUiXSwic291cmNlc0NvbnRlbnQiOlsiPHNjcmlwdD5cbiAgaW1wb3J0IHsgc2V0Q29udGV4dCwgb25Nb3VudCB9IGZyb20gJ3N2ZWx0ZSdcbiAgaW1wb3J0IHsgdGhpbmdzIH0gZnJvbSAnLi9zdG9yZSdcbiAgaW1wb3J0IHsgdHdlZW5lZCB9IGZyb20gJ3N2ZWx0ZS9tb3Rpb24nXG4gIGltcG9ydCBsYXlvdXQgZnJvbSAnLi9sYXlvdXQnXG4gIGV4cG9ydCBsZXQgaGVpZ2h0ID0gNDAwXG4gICQ6IGggPSBoZWlnaHRcbiAgJDogYXJyID0gbGF5b3V0KCR0aGluZ3MsIGgpXG48L3NjcmlwdD5cblxuPHN0eWxlPlxuICAuY29udGFpbmVyIHtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIHdpZHRoOiAxMDAlO1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgZmxleC1kaXJlY3Rpb246IHJvdztcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IHNwYWNlLWFyb3VuZDtcbiAgICBhbGlnbi1pdGVtczogY2VudGVyO1xuICAgIHRleHQtYWxpZ246IGNlbnRlcjtcbiAgICBmbGV4LXdyYXA6IG5vd3JhcDtcbiAgICBhbGlnbi1zZWxmOiBzdHJldGNoO1xuICB9XG5cbiAgLmJveCB7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIGJveC1zaXppbmc6IGJvcmRlci1ib3g7XG4gICAgcGFkZGluZzogMTBweDtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGhlaWdodDogMTAwJTtcbiAgICBmbGV4OiAxO1xuICAgIGZsZXgtZGlyZWN0aW9uOiBjb2x1bW47XG4gICAganVzdGlmeS1jb250ZW50OiBmbGV4LWVuZDtcbiAgICBhbGlnbi1pdGVtczogZmxleC1lbmQ7XG4gIH1cbiAgLmxhYmVsIHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgY29sb3I6ICNiM2I3YmE7XG4gICAgbWF4LXdpZHRoOiAyMDBweDtcbiAgICBmb250LXNpemU6IDExcHg7XG4gICAgbWFyZ2luLXRvcDogNHB4O1xuICAgIHRleHQtYWxpZ246IHJpZ2h0O1xuICAgIG1hcmdpbi1yaWdodDogNDVweDtcbiAgfVxuICAudmFsdWUge1xuICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICBjb2xvcjogIzk0OWE5ZTtcbiAgICBmb250LXNpemU6IDIwcHg7XG4gICAgbWFyZ2luOiA3cHg7XG4gICAgb3BhY2l0eTogMC44O1xuICAgIG1hcmdpbi1yaWdodDogNDVweDtcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGFsaWduLWl0ZW1zOiBmaXJzdCBiYXNlbGluZTtcbiAgfVxuICAubnVtIHtcbiAgICBvcGFjaXR5OiAxO1xuICB9XG4gIC51bml0IHtcbiAgICBmb250LXNpemU6IDEycHg7XG4gICAgbWFyZ2luLWxlZnQ6IDFweDtcbiAgICBjb2xvcjogIzk0OWE5ZTtcbiAgfVxuICAvKiAuZGVjIHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgZm9udC1zaXplOiAxNHB4O1xuICAgIGNvbG9yOiAjOTQ5YTllO1xuICAgIG1hcmdpbi1sZWZ0OiAxcHg7XG4gICAgY29sb3I6ICNiM2I3YmE7XG4gICAgdG9wOiAzcHg7XG4gIH0gKi9cbiAgLyogdGhlIGFjdHVhbCBiYXIgKi9cbiAgLnNpemVkIHtcbiAgICBwb3NpdGlvbjogcmVsYXRpdmU7XG4gICAgd2lkdGg6IDEwMCU7XG4gICAgYWxpZ24tc2VsZjogY2VudGVyO1xuICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgZmxleC1kaXJlY3Rpb246IHJvdztcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGZsZXgtZW5kO1xuICAgIGZsZXgtd3JhcDogbm93cmFwO1xuICAgIC8qIGJvcmRlci1ib3R0b206IDFweCBkYXNoZWQgbGlnaHRncmV5OyAqL1xuICB9XG4gIC5heGlzIHtcbiAgICB3aWR0aDogNnB4O1xuICAgIG1hcmdpbi1sZWZ0OiA3cHg7XG4gICAgYm9yZGVyLWxlZnQ6IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGJvcmRlci10b3A6IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGJvcmRlci1ib3R0b206IDFweCBkYXNoZWQgbGlnaHRncmV5O1xuICAgIGhlaWdodDogMTAwJTtcbiAgfVxuICAuYmVzaWRlIHtcbiAgICBkaXNwbGF5OiBmbGV4O1xuICAgIGZsZXgtZGlyZWN0aW9uOiByb3c7XG4gICAgZmxleC13cmFwOiBub3dyYXA7XG4gICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcbiAgICBqdXN0aWZ5LWNvbnRlbnQ6IGZsZXgtc3RhcnQ7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIG1hcmdpbi1sZWZ0OiA1cHg7XG4gICAgYm94LXNpemluZzogYm9yZGVyLWJveDtcbiAgICBwYWRkaW5nLXRvcDogMTJweDtcbiAgICBwYWRkaW5nLWJvdHRvbTogMTJweDtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgd2lkdGg6IDQ1cHg7XG4gIH1cbiAgLnBlcmNlbnQge1xuICAgIGNvbG9yOiAjYjNiN2JhO1xuICAgIGZvbnQtc2l6ZTogMTJweDtcbiAgICB3aWR0aDogNDBweDtcbiAgfVxuICAuaW5zaWRlIHtcbiAgICBjb2xvcjogI2ZiZmJmYjtcbiAgfVxuICAuYmFyIHtcbiAgICAvKiBtaW4td2lkdGg6IDEwMHB4OyAqL1xuICAgIC8qIGZsZXg6IDE7ICovXG4gICAgZGlzcGxheTogZmxleDtcbiAgICBib3gtc2l6aW5nOiBib3JkZXItYm94O1xuICAgIC8qIHBhZGRpbmc6IDIlOyAqL1xuICAgIGp1c3RpZnktY29udGVudDogZmxleC1lbmQ7XG4gICAgYWxpZ24taXRlbXM6IGZsZXgtZW5kO1xuICAgIGJvcmRlci1yYWRpdXM6IDJweDtcbiAgICBib3gtc2hhZG93OiAycHggMnB4IDhweCAwcHggcmdiYSgwLCAwLCAwLCAwLjIpO1xuICB9XG4gIC5iYXI6aG92ZXIge1xuICAgIGJveC1zaGFkb3c6IDJweCAycHggOHB4IDBweCBzdGVlbGJsdWU7XG4gIH1cbiAgLmdob3N0IHtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgd2lkdGg6IDI1JTtcbiAgICAvKiBib3JkZXItcmFkaXVzOiAzcHg7ICovXG4gICAgLyogYm9yZGVyOiAxcHggZG90dGVkIGxpZ2h0Z3JleTsgKi9cbiAgfVxuPC9zdHlsZT5cblxuPCEtLSA8cHJlPntKU09OLnN0cmluZ2lmeShhcnIsIG51bGwsIDIpfTwvcHJlPiAtLT5cbjxkaXYgY2xhc3M9XCJjb250YWluZXJcIiBzdHlsZT1cImhlaWdodDp7aH1weDtcIj5cbiAgeyNlYWNoIGFyciBhcyBiYXJ9XG4gICAgPGRpdiBjbGFzcz1cImJveFwiPlxuICAgICAgPCEtLSB0b3AgbnVtYmVyIC0tPlxuICAgICAgPGRpdiBjbGFzcz1cInZhbHVlXCIgc3R5bGU9XCJib3JkZXItYm90dG9tOiAycHggc29saWQge2Jhci5jb2xvcn07XCI+XG4gICAgICAgIDxzcGFuIGNsYXNzPVwibnVtXCI+e2Jhci5mbXRbMF19PC9zcGFuPlxuICAgICAgICA8c3BhbiBjbGFzcz1cInVuaXRcIj57YmFyLmZtdFsyXSB8fCAnJ308L3NwYW4+XG4gICAgICA8L2Rpdj5cbiAgICAgIDxkaXYgY2xhc3M9XCJzaXplZFwiIHN0eWxlPVwiaGVpZ2h0OntiYXIuaGVpZ2h0fSU7IFwiPlxuICAgICAgICB7I2lmIGJhci5yZXNjYWxlZH1cbiAgICAgICAgICA8ZGl2IGNsYXNzPVwiZ2hvc3RcIiAvPlxuICAgICAgICAgIDxkaXYgY2xhc3M9XCJnaG9zdFwiIC8+XG4gICAgICAgICAgPGRpdiBjbGFzcz1cImdob3N0XCIgLz5cbiAgICAgICAgey9pZn1cbiAgICAgICAgPGRpdlxuICAgICAgICAgIGNsYXNzPVwiYmFyXCJcbiAgICAgICAgICBzdHlsZT1cImJhY2tncm91bmQtY29sb3I6e2Jhci5jb2xvcn07IHdpZHRoOntiYXIud2lkdGh9OyBtYXgtd2lkdGg6e2Jhci53aWR0aH07XG4gICAgICAgICAgaGVpZ2h0OjEwMCU7XCI+XG4gICAgICAgICAgeyNpZiBiYXIucmVzY2FsZWQgJiYgYmFyLnBlcmNlbnRhZ2UgIT09IDB9XG4gICAgICAgICAgICA8ZGl2IGNsYXNzPVwiaW5zaWRlXCI+e2Jhci5wZXJjZW50YWdlICE9PSAxMDAgPyBiYXIucGVyY2VudGFnZSArICclJyA6ICcnfTwvZGl2PlxuICAgICAgICAgIHsvaWZ9XG4gICAgICAgIDwvZGl2PlxuXG4gICAgICAgIDxkaXYgY2xhc3M9XCJiZXNpZGVcIj5cbiAgICAgICAgICB7I2lmIGJhci5wZXJjZW50YWdlICE9PSAxMDAgJiYgYmFyLnJlc2NhbGVkICE9PSB0cnVlfVxuICAgICAgICAgICAgPGRpdiBjbGFzcz1cImF4aXNcIiAvPlxuICAgICAgICAgICAgPGRpdiBjbGFzcz1cInBlcmNlbnRcIj57YmFyLnBlcmNlbnRhZ2UgIT09IDEwMCA/IGJhci5wZXJjZW50YWdlICsgJyUnIDogJyd9PC9kaXY+XG4gICAgICAgICAgey9pZn1cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Rpdj5cbiAgICAgIDwhLS0gYm90dG9tIGxhYmVsIC0tPlxuICAgICAgPGRpdiBjbGFzcz1cImxhYmVsXCI+e2Jhci5sYWJlbH08L2Rpdj5cbiAgICA8L2Rpdj5cbiAgey9lYWNofVxuXG48L2Rpdj5cbjxzbG90IC8+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBV0UsVUFBVSxlQUFDLENBQUMsQUFDVixNQUFNLENBQUUsSUFBSSxDQUNaLFFBQVEsQ0FBRSxRQUFRLENBQ2xCLEtBQUssQ0FBRSxJQUFJLENBQ1gsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsR0FBRyxDQUNuQixlQUFlLENBQUUsWUFBWSxDQUM3QixXQUFXLENBQUUsTUFBTSxDQUNuQixVQUFVLENBQUUsTUFBTSxDQUNsQixTQUFTLENBQUUsTUFBTSxDQUNqQixVQUFVLENBQUUsT0FBTyxBQUNyQixDQUFDLEFBRUQsSUFBSSxlQUFDLENBQUMsQUFDSixRQUFRLENBQUUsUUFBUSxDQUNsQixVQUFVLENBQUUsVUFBVSxDQUN0QixPQUFPLENBQUUsSUFBSSxDQUNiLE9BQU8sQ0FBRSxJQUFJLENBQ2IsTUFBTSxDQUFFLElBQUksQ0FDWixJQUFJLENBQUUsQ0FBQyxDQUNQLGNBQWMsQ0FBRSxNQUFNLENBQ3RCLGVBQWUsQ0FBRSxRQUFRLENBQ3pCLFdBQVcsQ0FBRSxRQUFRLEFBQ3ZCLENBQUMsQUFDRCxNQUFNLGVBQUMsQ0FBQyxBQUNOLFFBQVEsQ0FBRSxRQUFRLENBQ2xCLEtBQUssQ0FBRSxPQUFPLENBQ2QsU0FBUyxDQUFFLEtBQUssQ0FDaEIsU0FBUyxDQUFFLElBQUksQ0FDZixVQUFVLENBQUUsR0FBRyxDQUNmLFVBQVUsQ0FBRSxLQUFLLENBQ2pCLFlBQVksQ0FBRSxJQUFJLEFBQ3BCLENBQUMsQUFDRCxNQUFNLGVBQUMsQ0FBQyxBQUNOLFFBQVEsQ0FBRSxRQUFRLENBQ2xCLEtBQUssQ0FBRSxPQUFPLENBQ2QsU0FBUyxDQUFFLElBQUksQ0FDZixNQUFNLENBQUUsR0FBRyxDQUNYLE9BQU8sQ0FBRSxHQUFHLENBQ1osWUFBWSxDQUFFLElBQUksQ0FDbEIsZUFBZSxDQUFFLE1BQU0sQ0FDdkIsT0FBTyxDQUFFLElBQUksQ0FDYixXQUFXLENBQUUsS0FBSyxDQUFDLFFBQVEsQUFDN0IsQ0FBQyxBQUNELElBQUksZUFBQyxDQUFDLEFBQ0osT0FBTyxDQUFFLENBQUMsQUFDWixDQUFDLEFBQ0QsS0FBSyxlQUFDLENBQUMsQUFDTCxTQUFTLENBQUUsSUFBSSxDQUNmLFdBQVcsQ0FBRSxHQUFHLENBQ2hCLEtBQUssQ0FBRSxPQUFPLEFBQ2hCLENBQUMsQUFVRCxNQUFNLGVBQUMsQ0FBQyxBQUNOLFFBQVEsQ0FBRSxRQUFRLENBQ2xCLEtBQUssQ0FBRSxJQUFJLENBQ1gsVUFBVSxDQUFFLE1BQU0sQ0FDbEIsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsR0FBRyxDQUNuQixlQUFlLENBQUUsUUFBUSxDQUN6QixTQUFTLENBQUUsTUFBTSxBQUVuQixDQUFDLEFBQ0QsS0FBSyxlQUFDLENBQUMsQUFDTCxLQUFLLENBQUUsR0FBRyxDQUNWLFdBQVcsQ0FBRSxHQUFHLENBQ2hCLFdBQVcsQ0FBRSxHQUFHLENBQUMsTUFBTSxDQUFDLFNBQVMsQ0FDakMsVUFBVSxDQUFFLEdBQUcsQ0FBQyxNQUFNLENBQUMsU0FBUyxDQUNoQyxhQUFhLENBQUUsR0FBRyxDQUFDLE1BQU0sQ0FBQyxTQUFTLENBQ25DLE1BQU0sQ0FBRSxJQUFJLEFBQ2QsQ0FBQyxBQUNELE9BQU8sZUFBQyxDQUFDLEFBQ1AsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsR0FBRyxDQUNuQixTQUFTLENBQUUsTUFBTSxDQUNqQixXQUFXLENBQUUsTUFBTSxDQUNuQixlQUFlLENBQUUsVUFBVSxDQUMzQixRQUFRLENBQUUsUUFBUSxDQUNsQixXQUFXLENBQUUsR0FBRyxDQUNoQixVQUFVLENBQUUsVUFBVSxDQUN0QixXQUFXLENBQUUsSUFBSSxDQUNqQixjQUFjLENBQUUsSUFBSSxDQUNwQixNQUFNLENBQUUsSUFBSSxDQUNaLEtBQUssQ0FBRSxJQUFJLEFBQ2IsQ0FBQyxBQUNELFFBQVEsZUFBQyxDQUFDLEFBQ1IsS0FBSyxDQUFFLE9BQU8sQ0FDZCxTQUFTLENBQUUsSUFBSSxDQUNmLEtBQUssQ0FBRSxJQUFJLEFBQ2IsQ0FBQyxBQUNELE9BQU8sZUFBQyxDQUFDLEFBQ1AsS0FBSyxDQUFFLE9BQU8sQUFDaEIsQ0FBQyxBQUNELElBQUksZUFBQyxDQUFDLEFBR0osT0FBTyxDQUFFLElBQUksQ0FDYixVQUFVLENBQUUsVUFBVSxDQUV0QixlQUFlLENBQUUsUUFBUSxDQUN6QixXQUFXLENBQUUsUUFBUSxDQUNyQixhQUFhLENBQUUsR0FBRyxDQUNsQixVQUFVLENBQUUsR0FBRyxDQUFDLEdBQUcsQ0FBQyxHQUFHLENBQUMsR0FBRyxDQUFDLEtBQUssQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsR0FBRyxDQUFDLEFBQ2hELENBQUMsQUFDRCxtQkFBSSxNQUFNLEFBQUMsQ0FBQyxBQUNWLFVBQVUsQ0FBRSxHQUFHLENBQUMsR0FBRyxDQUFDLEdBQUcsQ0FBQyxHQUFHLENBQUMsU0FBUyxBQUN2QyxDQUFDLEFBQ0QsTUFBTSxlQUFDLENBQUMsQUFDTixNQUFNLENBQUUsSUFBSSxDQUNaLEtBQUssQ0FBRSxHQUFHLEFBR1osQ0FBQyJ9 */";
     	append_dev(document.head, style);
     }
 
     function get_each_context(ctx, list, i) {
     	const child_ctx = ctx.slice();
-    	child_ctx[5] = list[i];
+    	child_ctx[6] = list[i];
     	return child_ctx;
     }
 
-    // (147:8) {#if bar.rescaled}
+    // (145:8) {#if bar.rescaled}
     function create_if_block_2(ctx) {
     	let div0;
     	let t0;
@@ -543,12 +713,12 @@ var app = (function () {
     			div1 = element("div");
     			t1 = space();
     			div2 = element("div");
-    			attr_dev(div0, "class", "ghost svelte-1ic7itr");
-    			add_location(div0, file, 147, 10, 3050);
-    			attr_dev(div1, "class", "ghost svelte-1ic7itr");
-    			add_location(div1, file, 148, 10, 3082);
-    			attr_dev(div2, "class", "ghost svelte-1ic7itr");
-    			add_location(div2, file, 149, 10, 3114);
+    			attr_dev(div0, "class", "ghost svelte-19rgbmb");
+    			add_location(div0, file, 145, 10, 3112);
+    			attr_dev(div1, "class", "ghost svelte-19rgbmb");
+    			add_location(div1, file, 146, 10, 3144);
+    			attr_dev(div2, "class", "ghost svelte-19rgbmb");
+    			add_location(div2, file, 147, 10, 3176);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div0, anchor);
@@ -570,19 +740,19 @@ var app = (function () {
     		block,
     		id: create_if_block_2.name,
     		type: "if",
-    		source: "(147:8) {#if bar.rescaled}",
+    		source: "(145:8) {#if bar.rescaled}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (156:10) {#if bar.rescaled}
+    // (154:10) {#if bar.rescaled && bar.percentage !== 0}
     function create_if_block_1(ctx) {
     	let div;
 
-    	let t_value = (/*bar*/ ctx[5].percentage !== 100
-    	? /*bar*/ ctx[5].percentage + "%"
+    	let t_value = (/*bar*/ ctx[6].percentage !== 100
+    	? /*bar*/ ctx[6].percentage + "%"
     	: "") + "";
 
     	let t;
@@ -591,16 +761,16 @@ var app = (function () {
     		c: function create() {
     			div = element("div");
     			t = text(t_value);
-    			attr_dev(div, "class", "inside svelte-1ic7itr");
-    			add_location(div, file, 156, 12, 3340);
+    			attr_dev(div, "class", "inside svelte-19rgbmb");
+    			add_location(div, file, 154, 12, 3426);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div, anchor);
     			append_dev(div, t);
     		},
     		p: function update(ctx, dirty) {
-    			if (dirty & /*arr*/ 2 && t_value !== (t_value = (/*bar*/ ctx[5].percentage !== 100
-    			? /*bar*/ ctx[5].percentage + "%"
+    			if (dirty & /*arr*/ 2 && t_value !== (t_value = (/*bar*/ ctx[6].percentage !== 100
+    			? /*bar*/ ctx[6].percentage + "%"
     			: "") + "")) set_data_dev(t, t_value);
     		},
     		d: function destroy(detaching) {
@@ -612,21 +782,21 @@ var app = (function () {
     		block,
     		id: create_if_block_1.name,
     		type: "if",
-    		source: "(156:10) {#if bar.rescaled}",
+    		source: "(154:10) {#if bar.rescaled && bar.percentage !== 0}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (162:10) {#if bar.percentage !== 100 && bar.rescaled !== true}
+    // (160:10) {#if bar.percentage !== 100 && bar.rescaled !== true}
     function create_if_block(ctx) {
     	let div0;
     	let t0;
     	let div1;
 
-    	let t1_value = (/*bar*/ ctx[5].percentage !== 100
-    	? /*bar*/ ctx[5].percentage + "%"
+    	let t1_value = (/*bar*/ ctx[6].percentage !== 100
+    	? /*bar*/ ctx[6].percentage + "%"
     	: "") + "";
 
     	let t1;
@@ -637,10 +807,10 @@ var app = (function () {
     			t0 = space();
     			div1 = element("div");
     			t1 = text(t1_value);
-    			attr_dev(div0, "class", "axis svelte-1ic7itr");
-    			add_location(div0, file, 162, 12, 3556);
-    			attr_dev(div1, "class", "percent svelte-1ic7itr");
-    			add_location(div1, file, 163, 12, 3589);
+    			attr_dev(div0, "class", "axis svelte-19rgbmb");
+    			add_location(div0, file, 160, 12, 3642);
+    			attr_dev(div1, "class", "percent svelte-19rgbmb");
+    			add_location(div1, file, 161, 12, 3675);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div0, anchor);
@@ -649,8 +819,8 @@ var app = (function () {
     			append_dev(div1, t1);
     		},
     		p: function update(ctx, dirty) {
-    			if (dirty & /*arr*/ 2 && t1_value !== (t1_value = (/*bar*/ ctx[5].percentage !== 100
-    			? /*bar*/ ctx[5].percentage + "%"
+    			if (dirty & /*arr*/ 2 && t1_value !== (t1_value = (/*bar*/ ctx[6].percentage !== 100
+    			? /*bar*/ ctx[6].percentage + "%"
     			: "") + "")) set_data_dev(t1, t1_value);
     		},
     		d: function destroy(detaching) {
@@ -664,23 +834,23 @@ var app = (function () {
     		block,
     		id: create_if_block.name,
     		type: "if",
-    		source: "(162:10) {#if bar.percentage !== 100 && bar.rescaled !== true}",
+    		source: "(160:10) {#if bar.percentage !== 100 && bar.rescaled !== true}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (139:2) {#each arr as bar}
+    // (137:2) {#each arr as bar}
     function create_each_block(ctx) {
     	let div5;
     	let div0;
     	let span0;
-    	let t0_value = /*bar*/ ctx[5].fmt[0] + "";
+    	let t0_value = /*bar*/ ctx[6].fmt[0] + "";
     	let t0;
     	let t1;
     	let span1;
-    	let t2_value = (/*bar*/ ctx[5].fmt[2] || "") + "";
+    	let t2_value = (/*bar*/ ctx[6].fmt[2] || "") + "";
     	let t2;
     	let t3;
     	let div3;
@@ -690,12 +860,12 @@ var app = (function () {
     	let div2;
     	let t6;
     	let div4;
-    	let t7_value = /*bar*/ ctx[5].label + "";
+    	let t7_value = /*bar*/ ctx[6].label + "";
     	let t7;
     	let t8;
-    	let if_block0 = /*bar*/ ctx[5].rescaled && create_if_block_2(ctx);
-    	let if_block1 = /*bar*/ ctx[5].rescaled && create_if_block_1(ctx);
-    	let if_block2 = /*bar*/ ctx[5].percentage !== 100 && /*bar*/ ctx[5].rescaled !== true && create_if_block(ctx);
+    	let if_block0 = /*bar*/ ctx[6].rescaled && create_if_block_2(ctx);
+    	let if_block1 = /*bar*/ ctx[6].rescaled && /*bar*/ ctx[6].percentage !== 0 && create_if_block_1(ctx);
+    	let if_block2 = /*bar*/ ctx[6].percentage !== 100 && /*bar*/ ctx[6].rescaled !== true && create_if_block(ctx);
 
     	const block = {
     		c: function create() {
@@ -719,28 +889,28 @@ var app = (function () {
     			div4 = element("div");
     			t7 = text(t7_value);
     			t8 = space();
-    			attr_dev(span0, "class", "num svelte-1ic7itr");
-    			add_location(span0, file, 142, 8, 2852);
-    			attr_dev(span1, "class", "unit svelte-1ic7itr");
-    			add_location(span1, file, 143, 8, 2898);
-    			attr_dev(div0, "class", "value svelte-1ic7itr");
-    			set_style(div0, "border-bottom", "2px solid " + /*bar*/ ctx[5].color);
-    			add_location(div0, file, 141, 6, 2778);
-    			attr_dev(div1, "class", "bar svelte-1ic7itr");
-    			set_style(div1, "background-color", /*bar*/ ctx[5].color);
-    			set_style(div1, "width", /*bar*/ ctx[5].width);
-    			set_style(div1, "max-width", /*bar*/ ctx[5].width);
+    			attr_dev(span0, "class", "num svelte-19rgbmb");
+    			add_location(span0, file, 140, 8, 2914);
+    			attr_dev(span1, "class", "unit svelte-19rgbmb");
+    			add_location(span1, file, 141, 8, 2960);
+    			attr_dev(div0, "class", "value svelte-19rgbmb");
+    			set_style(div0, "border-bottom", "2px solid " + /*bar*/ ctx[6].color);
+    			add_location(div0, file, 139, 6, 2840);
+    			attr_dev(div1, "class", "bar svelte-19rgbmb");
+    			set_style(div1, "background-color", /*bar*/ ctx[6].color);
+    			set_style(div1, "width", /*bar*/ ctx[6].width);
+    			set_style(div1, "max-width", /*bar*/ ctx[6].width);
     			set_style(div1, "height", "100%");
-    			add_location(div1, file, 151, 8, 3158);
-    			attr_dev(div2, "class", "beside svelte-1ic7itr");
-    			add_location(div2, file, 160, 8, 3459);
-    			attr_dev(div3, "class", "sized svelte-1ic7itr");
-    			set_style(div3, "height", /*bar*/ ctx[5].height + "%");
-    			add_location(div3, file, 145, 6, 2962);
-    			attr_dev(div4, "class", "label svelte-1ic7itr");
-    			add_location(div4, file, 168, 6, 3747);
-    			attr_dev(div5, "class", "box svelte-1ic7itr");
-    			add_location(div5, file, 139, 4, 2728);
+    			add_location(div1, file, 149, 8, 3220);
+    			attr_dev(div2, "class", "beside svelte-19rgbmb");
+    			add_location(div2, file, 158, 8, 3545);
+    			attr_dev(div3, "class", "sized svelte-19rgbmb");
+    			set_style(div3, "height", /*bar*/ ctx[6].height + "%");
+    			add_location(div3, file, 143, 6, 3024);
+    			attr_dev(div4, "class", "label svelte-19rgbmb");
+    			add_location(div4, file, 166, 6, 3833);
+    			attr_dev(div5, "class", "box svelte-19rgbmb");
+    			add_location(div5, file, 137, 4, 2790);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div5, anchor);
@@ -765,14 +935,14 @@ var app = (function () {
     			append_dev(div5, t8);
     		},
     		p: function update(ctx, dirty) {
-    			if (dirty & /*arr*/ 2 && t0_value !== (t0_value = /*bar*/ ctx[5].fmt[0] + "")) set_data_dev(t0, t0_value);
-    			if (dirty & /*arr*/ 2 && t2_value !== (t2_value = (/*bar*/ ctx[5].fmt[2] || "") + "")) set_data_dev(t2, t2_value);
+    			if (dirty & /*arr*/ 2 && t0_value !== (t0_value = /*bar*/ ctx[6].fmt[0] + "")) set_data_dev(t0, t0_value);
+    			if (dirty & /*arr*/ 2 && t2_value !== (t2_value = (/*bar*/ ctx[6].fmt[2] || "") + "")) set_data_dev(t2, t2_value);
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div0, "border-bottom", "2px solid " + /*bar*/ ctx[5].color);
+    				set_style(div0, "border-bottom", "2px solid " + /*bar*/ ctx[6].color);
     			}
 
-    			if (/*bar*/ ctx[5].rescaled) {
+    			if (/*bar*/ ctx[6].rescaled) {
     				if (if_block0) ; else {
     					if_block0 = create_if_block_2(ctx);
     					if_block0.c();
@@ -783,7 +953,7 @@ var app = (function () {
     				if_block0 = null;
     			}
 
-    			if (/*bar*/ ctx[5].rescaled) {
+    			if (/*bar*/ ctx[6].rescaled && /*bar*/ ctx[6].percentage !== 0) {
     				if (if_block1) {
     					if_block1.p(ctx, dirty);
     				} else {
@@ -797,18 +967,18 @@ var app = (function () {
     			}
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div1, "background-color", /*bar*/ ctx[5].color);
+    				set_style(div1, "background-color", /*bar*/ ctx[6].color);
     			}
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div1, "width", /*bar*/ ctx[5].width);
+    				set_style(div1, "width", /*bar*/ ctx[6].width);
     			}
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div1, "max-width", /*bar*/ ctx[5].width);
+    				set_style(div1, "max-width", /*bar*/ ctx[6].width);
     			}
 
-    			if (/*bar*/ ctx[5].percentage !== 100 && /*bar*/ ctx[5].rescaled !== true) {
+    			if (/*bar*/ ctx[6].percentage !== 100 && /*bar*/ ctx[6].rescaled !== true) {
     				if (if_block2) {
     					if_block2.p(ctx, dirty);
     				} else {
@@ -822,10 +992,10 @@ var app = (function () {
     			}
 
     			if (dirty & /*arr*/ 2) {
-    				set_style(div3, "height", /*bar*/ ctx[5].height + "%");
+    				set_style(div3, "height", /*bar*/ ctx[6].height + "%");
     			}
 
-    			if (dirty & /*arr*/ 2 && t7_value !== (t7_value = /*bar*/ ctx[5].label + "")) set_data_dev(t7, t7_value);
+    			if (dirty & /*arr*/ 2 && t7_value !== (t7_value = /*bar*/ ctx[6].label + "")) set_data_dev(t7, t7_value);
     		},
     		d: function destroy(detaching) {
     			if (detaching) detach_dev(div5);
@@ -839,7 +1009,7 @@ var app = (function () {
     		block,
     		id: create_each_block.name,
     		type: "each",
-    		source: "(139:2) {#each arr as bar}",
+    		source: "(137:2) {#each arr as bar}",
     		ctx
     	});
 
@@ -858,8 +1028,8 @@ var app = (function () {
     		each_blocks[i] = create_each_block(get_each_context(ctx, each_value, i));
     	}
 
-    	const default_slot_template = /*$$slots*/ ctx[3].default;
-    	const default_slot = create_slot(default_slot_template, ctx, /*$$scope*/ ctx[2], null);
+    	const default_slot_template = /*$$slots*/ ctx[4].default;
+    	const default_slot = create_slot(default_slot_template, ctx, /*$$scope*/ ctx[3], null);
 
     	const block = {
     		c: function create() {
@@ -871,9 +1041,9 @@ var app = (function () {
 
     			t = space();
     			if (default_slot) default_slot.c();
-    			attr_dev(div, "class", "container svelte-1ic7itr");
-    			set_style(div, "min-height", /*height*/ ctx[0] + "px");
-    			add_location(div, file, 136, 0, 2647);
+    			attr_dev(div, "class", "container svelte-19rgbmb");
+    			set_style(div, "height", /*h*/ ctx[0] + "px");
+    			add_location(div, file, 135, 0, 2719);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -918,13 +1088,13 @@ var app = (function () {
     				each_blocks.length = each_value.length;
     			}
 
-    			if (!current || dirty & /*height*/ 1) {
-    				set_style(div, "min-height", /*height*/ ctx[0] + "px");
+    			if (!current || dirty & /*h*/ 1) {
+    				set_style(div, "height", /*h*/ ctx[0] + "px");
     			}
 
     			if (default_slot) {
-    				if (default_slot.p && dirty & /*$$scope*/ 4) {
-    					update_slot(default_slot, default_slot_template, ctx, /*$$scope*/ ctx[2], dirty, null, null);
+    				if (default_slot.p && dirty & /*$$scope*/ 8) {
+    					update_slot(default_slot, default_slot_template, ctx, /*$$scope*/ ctx[3], dirty, null, null);
     				}
     			}
     		},
@@ -959,14 +1129,8 @@ var app = (function () {
     function instance($$self, $$props, $$invalidate) {
     	let $things;
     	validate_store(things, "things");
-    	component_subscribe($$self, things, $$value => $$invalidate(4, $things = $$value));
+    	component_subscribe($$self, things, $$value => $$invalidate(5, $things = $$value));
     	let { height = 400 } = $$props;
-    	let arr = [];
-
-    	onMount(() => {
-    		$$invalidate(1, arr = layout($things));
-    	});
-
     	const writable_props = ["height"];
 
     	Object.keys($$props).forEach(key => {
@@ -977,37 +1141,53 @@ var app = (function () {
     	validate_slots("Scale", $$slots, ['default']);
 
     	$$self.$$set = $$props => {
-    		if ("height" in $$props) $$invalidate(0, height = $$props.height);
-    		if ("$$scope" in $$props) $$invalidate(2, $$scope = $$props.$$scope);
+    		if ("height" in $$props) $$invalidate(2, height = $$props.height);
+    		if ("$$scope" in $$props) $$invalidate(3, $$scope = $$props.$$scope);
     	};
 
     	$$self.$capture_state = () => ({
     		setContext,
     		onMount,
     		things,
+    		tweened,
     		layout,
     		height,
+    		h,
     		arr,
     		$things
     	});
 
     	$$self.$inject_state = $$props => {
-    		if ("height" in $$props) $$invalidate(0, height = $$props.height);
+    		if ("height" in $$props) $$invalidate(2, height = $$props.height);
+    		if ("h" in $$props) $$invalidate(0, h = $$props.h);
     		if ("arr" in $$props) $$invalidate(1, arr = $$props.arr);
     	};
+
+    	let h;
+    	let arr;
 
     	if ($$props && "$$inject" in $$props) {
     		$$self.$inject_state($$props.$$inject);
     	}
 
-    	return [height, arr, $$scope, $$slots];
+    	$$self.$$.update = () => {
+    		if ($$self.$$.dirty & /*height*/ 4) {
+    			 $$invalidate(0, h = height);
+    		}
+
+    		if ($$self.$$.dirty & /*$things, h*/ 33) {
+    			 $$invalidate(1, arr = layout($things));
+    		}
+    	};
+
+    	return [h, arr, height, $$scope, $$slots];
     }
 
     class Scale extends SvelteComponentDev {
     	constructor(options) {
     		super(options);
-    		if (!document.getElementById("svelte-1ic7itr-style")) add_css();
-    		init(this, options, instance, create_fragment, safe_not_equal, { height: 0 });
+    		if (!document.getElementById("svelte-19rgbmb-style")) add_css();
+    		init(this, options, instance, create_fragment, safe_not_equal, { height: 2 });
 
     		dispatch_dev("SvelteRegisterComponent", {
     			component: this,
@@ -1044,29 +1224,27 @@ var app = (function () {
     !function(e){module.exports=e();}(function(){return function u(i,a,c){function f(r,e){if(!a[r]){if(!i[r]){var o="function"==typeof commonjsRequire&&commonjsRequire;if(!e&&o)return o(r,!0);if(d)return d(r,!0);var n=new Error("Cannot find module '"+r+"'");throw n.code="MODULE_NOT_FOUND",n}var t=a[r]={exports:{}};i[r][0].call(t.exports,function(e){return f(i[r][1][e]||e)},t,t.exports,u,i,a,c);}return a[r].exports}for(var d="function"==typeof commonjsRequire&&commonjsRequire,e=0;e<c.length;e++)f(c[e]);return f}({1:[function(e,r,o){r.exports={blue:"#6699cc",green:"#6accb2",yellow:"#e1e6b3",red:"#cc7066",pink:"#F2C0BB",brown:"#705E5C",orange:"#cc8a66",purple:"#d8b3e6",navy:"#335799",olive:"#7f9c6c",fuscia:"#735873",beige:"#e6d7b3",slate:"#8C8C88",suede:"#9c896c",burnt:"#603a39",sea:"#50617A",sky:"#2D85A8",night:"#303b50",rouge:"#914045",grey:"#838B91",mud:"#C4ABAB",royal:"#275291",cherry:"#cc6966",tulip:"#e6b3bc",rose:"#D68881",fire:"#AB5850",greyblue:"#72697D",greygreen:"#8BA3A2",greypurple:"#978BA3",burn:"#6D5685",slategrey:"#bfb0b3",light:"#a3a5a5",lighter:"#d7d5d2",fudge:"#4d4d4d",lightgrey:"#949a9e",white:"#fbfbfb",dimgrey:"#606c74",softblack:"#463D4F",dark:"#443d3d",black:"#333333"};},{}],2:[function(e,r,o){var n=e("./colors"),t={juno:["blue","mud","navy","slate","pink","burn"],barrow:["rouge","red","orange","burnt","brown","greygreen"],roma:["#8a849a","#b5b0bf","rose","lighter","greygreen","mud"],palmer:["red","navy","olive","pink","suede","sky"],mark:["#848f9a","#9aa4ac","slate","#b0b8bf","mud","grey"],salmon:["sky","sea","fuscia","slate","mud","fudge"],dupont:["green","brown","orange","red","olive","blue"],bloor:["night","navy","beige","rouge","mud","grey"],yukon:["mud","slate","brown","sky","beige","red"],david:["blue","green","yellow","red","pink","light"],neste:["mud","cherry","royal","rouge","greygreen","greypurple"],ken:["red","sky","#c67a53","greygreen","#dfb59f","mud"]};Object.keys(t).forEach(function(e){t[e]=t[e].map(function(e){return n[e]||e});}),r.exports=t;},{"./colors":1}],3:[function(e,r,o){var n=e("./colors"),t=e("./combos"),u={colors:n,list:Object.keys(n).map(function(e){return n[e]}),combos:t};r.exports=u;},{"./colors":1,"./combos":2}]},{},[3])(3)});
     });
 
+    function uuid() {
+      return 'xxxxxx'.replace(/[xy]/g, function (c) {
+        var r = (Math.random() * 16) | 0,
+          v = c == 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16)
+      })
+    }
+
     /* src/Thing.svelte generated by Svelte v3.24.1 */
-    const file$1 = "src/Thing.svelte";
 
     function create_fragment$1(ctx) {
-    	let div;
-
     	const block = {
-    		c: function create() {
-    			div = element("div");
-    			add_location(div, file$1, 19, 0, 354);
-    		},
+    		c: noop,
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
     		},
-    		m: function mount(target, anchor) {
-    			insert_dev(target, div, anchor);
-    		},
+    		m: noop,
     		p: noop,
     		i: noop,
     		o: noop,
-    		d: function destroy(detaching) {
-    			if (detaching) detach_dev(div);
-    		}
+    		d: noop
     	};
 
     	dispatch_dev("SvelteRegisterBlock", {
@@ -1083,22 +1261,32 @@ var app = (function () {
     function instance$1($$self, $$props, $$invalidate) {
     	let $things;
     	validate_store(things, "things");
-    	component_subscribe($$self, things, $$value => $$invalidate(4, $things = $$value));
+    	component_subscribe($$self, things, $$value => $$invalidate(5, $things = $$value));
     	let { color = "steelblue" } = $$props;
     	let { label = "" } = $$props;
     	let { value = 0 } = $$props;
     	let { aspect = "" } = $$props;
+    	let { id = uuid() } = $$props;
     	let colors = spencerColor.colors;
     	color = colors[color] || color;
 
     	$things.push({
     		color,
+    		id,
     		aspect,
     		value: Number(value),
     		label
     	});
 
-    	const writable_props = ["color", "label", "value", "aspect"];
+    	afterUpdate(() => {
+    		things.update(arr => {
+    			let o = arr.find(o => o.id === id);
+    			o.value = value;
+    			return arr;
+    		});
+    	});
+
+    	const writable_props = ["color", "label", "value", "aspect", "id"];
 
     	Object.keys($$props).forEach(key => {
     		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== "$$") console.warn(`<Thing> was created with unknown prop '${key}'`);
@@ -1112,15 +1300,19 @@ var app = (function () {
     		if ("label" in $$props) $$invalidate(1, label = $$props.label);
     		if ("value" in $$props) $$invalidate(2, value = $$props.value);
     		if ("aspect" in $$props) $$invalidate(3, aspect = $$props.aspect);
+    		if ("id" in $$props) $$invalidate(4, id = $$props.id);
     	};
 
     	$$self.$capture_state = () => ({
     		things,
+    		afterUpdate,
+    		c: spencerColor,
+    		uuid,
     		color,
     		label,
     		value,
     		aspect,
-    		c: spencerColor,
+    		id,
     		colors,
     		$things
     	});
@@ -1130,6 +1322,7 @@ var app = (function () {
     		if ("label" in $$props) $$invalidate(1, label = $$props.label);
     		if ("value" in $$props) $$invalidate(2, value = $$props.value);
     		if ("aspect" in $$props) $$invalidate(3, aspect = $$props.aspect);
+    		if ("id" in $$props) $$invalidate(4, id = $$props.id);
     		if ("colors" in $$props) colors = $$props.colors;
     	};
 
@@ -1137,13 +1330,20 @@ var app = (function () {
     		$$self.$inject_state($$props.$$inject);
     	}
 
-    	return [color, label, value, aspect];
+    	return [color, label, value, aspect, id];
     }
 
     class Thing extends SvelteComponentDev {
     	constructor(options) {
     		super(options);
-    		init(this, options, instance$1, create_fragment$1, safe_not_equal, { color: 0, label: 1, value: 2, aspect: 3 });
+
+    		init(this, options, instance$1, create_fragment$1, safe_not_equal, {
+    			color: 0,
+    			label: 1,
+    			value: 2,
+    			aspect: 3,
+    			id: 4
+    		});
 
     		dispatch_dev("SvelteRegisterComponent", {
     			component: this,
@@ -1184,50 +1384,792 @@ var app = (function () {
     	set aspect(value) {
     		throw new Error("<Thing>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
     	}
+
+    	get id() {
+    		throw new Error("<Thing>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	set id(value) {
+    		throw new Error("<Thing>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
     }
+
+    const scaleLinear = function (obj) {
+      let world = obj.world || [];
+      let minmax = obj.minmax || [];
+      const calc = (num) => {
+        let range = minmax[1] - minmax[0];
+        let percent = (num - minmax[0]) / range;
+        let size = world[1] - world[0];
+        let res = size * percent;
+        if (res > minmax.max) {
+          return minmax.max
+        }
+        if (res < minmax.min) {
+          return minmax.min
+        }
+        return Math.round(res)
+      };
+      // invert the calculation. return a %?
+      calc.backward = (num) => {
+        let size = world[1] - world[0];
+        let range = minmax[1] - minmax[0];
+        let percent = (num - world[0]) / size;
+        return Math.round(percent * range)
+      };
+      return calc
+    };
+
+    const getBox = function (e) {
+      let el = e.target;
+      for (let i = 0; i < 7; i += 1) {
+        if (el.classList.contains('container') === true) {
+          break
+        }
+        el = el.parentNode || el;
+      }
+      return el.getBoundingClientRect()
+    };
+
+    // handle initial click
+    const goHere = function (e, cb) {
+      let outside = getBox(e);
+      let res = {
+        start: {},
+        diff: {},
+        value: {
+          x: e.pageX - outside.left, //seems to work?
+          y: e.clientY - outside.top,
+        },
+      };
+      res.percent = {
+        x: res.value.x / outside.width,
+        y: res.value.y / outside.height,
+      };
+      cb(res);
+    };
+
+    const onFirstClick = function (e, cb) {
+      let outside = getBox(e);
+      let start = {
+        x: e.pageX - outside.left,
+        y: e.clientY - outside.top,
+      };
+      const onDrag = function (event) {
+        let res = {
+          start: start,
+          diff: {
+            x: event.pageX - start.x - outside.left,
+            y: event.clientY - start.y - outside.top,
+          },
+        };
+        res.value = {
+          x: event.pageX - outside.left,
+          y: event.clientY - outside.top,
+        };
+        // ensure values are within bounds
+        if (res.value.x > outside.width) {
+          res.value.x = outside.width;
+        }
+        if (res.value.y > outside.height) {
+          res.value.y = outside.height;
+        }
+        if (res.value.x < 0) {
+          res.value.x = 0;
+        }
+        if (res.value.y < 0) {
+          res.value.y = 0;
+        }
+        // finally, calculate percents
+        res.percent = {
+          x: res.value.x / outside.width,
+          y: res.value.y / outside.height,
+        };
+        cb(res);
+      };
+
+      // stop event
+      window.addEventListener('pointerup', () => {
+        window.removeEventListener('pointermove', onDrag);
+        window.removeEventListener('pointerup', this);
+      });
+      window.addEventListener('pointermove', onDrag);
+      // fire first
+      goHere(e, cb);
+    };
+
+    var dragHandler = onFirstClick;
+
+    /* Users/spencer/mountain/somehow-slider/src/Horizontal/Horizontal.svelte generated by Svelte v3.24.1 */
+    const file$1 = "Users/spencer/mountain/somehow-slider/src/Horizontal/Horizontal.svelte";
+
+    function add_css$1() {
+    	var style = element("style");
+    	style.id = "svelte-sjpf61-style";
+    	style.textContent = ".container.svelte-sjpf61{position:relative;height:40px;width:100%;cursor:pointer;outline:none}.background.svelte-sjpf61{position:absolute;background-color:lightgrey;border-radius:8px;box-shadow:2px 2px 8px 0px rgba(0, 0, 0, 0.2);top:33%;height:33%;width:100%;touch-action:none;padding-right:15px}.handle.svelte-sjpf61{position:relative;border-radius:8px;box-shadow:2px 2px 8px 0px rgba(0, 0, 0, 0.2);position:absolute;width:15px;height:100%;cursor:col-resize;border:1px solid grey;position:relative;background-color:steelblue;touch-action:none}.number.svelte-sjpf61{position:absolute;top:50px;user-select:none}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiSG9yaXpvbnRhbC5zdmVsdGUiLCJzb3VyY2VzIjpbIkhvcml6b250YWwuc3ZlbHRlIl0sInNvdXJjZXNDb250ZW50IjpbIjxzY3JpcHQ+XG4gIGltcG9ydCBzY2FsZUxpbmVhciBmcm9tICcuLi9zY2FsZSdcbiAgaW1wb3J0IG9uRmlyc3RDbGljayBmcm9tICcuLi9kcmFnSGFuZGxlcidcbiAgZXhwb3J0IGxldCB2YWx1ZSA9IDBcbiAgZXhwb3J0IGxldCBtYXggPSAxMDBcbiAgZXhwb3J0IGxldCBtaW4gPSAwXG4gIGxldCBzY2FsZSA9IHNjYWxlTGluZWFyKHsgd29ybGQ6IFswLCAxMDBdLCBtaW5tYXg6IFttaW4sIG1heF0gfSlcbiAgbGV0IHBlcmNlbnQgPSBzY2FsZSh2YWx1ZSlcblxuICBmdW5jdGlvbiBzdGFydENsaWNrKGUpIHtcbiAgICBvbkZpcnN0Q2xpY2soZSwgcmVzID0+IHtcbiAgICAgIHBlcmNlbnQgPSByZXMucGVyY2VudC54ICogMTAwXG4gICAgICB2YWx1ZSA9IHNjYWxlLmJhY2t3YXJkKHBlcmNlbnQpXG4gICAgfSlcbiAgfVxuICBmdW5jdGlvbiBoYW5kbGVLZXlkb3duKGV2ZW50KSB7XG4gICAgaWYgKGV2ZW50LmtleSA9PT0gJ0Fycm93TGVmdCcpIHtcbiAgICAgIHBlcmNlbnQgLT0gMVxuICAgICAgdmFsdWUgPSBzY2FsZS5iYWNrd2FyZChwZXJjZW50KVxuICAgIH1cbiAgICBpZiAoZXZlbnQua2V5ID09PSAnQXJyb3dSaWdodCcpIHtcbiAgICAgIHBlcmNlbnQgKz0gMVxuICAgICAgdmFsdWUgPSBzY2FsZS5iYWNrd2FyZChwZXJjZW50KVxuICAgIH1cbiAgICBldmVudC5wcmV2ZW50RGVmYXVsdCgpXG4gIH1cbjwvc2NyaXB0PlxuXG48c3R5bGU+XG4gIC5jb250YWluZXIge1xuICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICBoZWlnaHQ6IDQwcHg7XG4gICAgd2lkdGg6IDEwMCU7XG4gICAgY3Vyc29yOiBwb2ludGVyO1xuICAgIG91dGxpbmU6IG5vbmU7XG4gIH1cbiAgLmJhY2tncm91bmQge1xuICAgIHBvc2l0aW9uOiBhYnNvbHV0ZTtcbiAgICBiYWNrZ3JvdW5kLWNvbG9yOiBsaWdodGdyZXk7XG4gICAgYm9yZGVyLXJhZGl1czogOHB4O1xuICAgIGJveC1zaGFkb3c6IDJweCAycHggOHB4IDBweCByZ2JhKDAsIDAsIDAsIDAuMik7XG4gICAgdG9wOiAzMyU7XG4gICAgaGVpZ2h0OiAzMyU7XG4gICAgd2lkdGg6IDEwMCU7XG4gICAgdG91Y2gtYWN0aW9uOiBub25lO1xuICAgIHBhZGRpbmctcmlnaHQ6IDE1cHg7XG4gIH1cbiAgLmhhbmRsZSB7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIGJvcmRlci1yYWRpdXM6IDhweDtcbiAgICBib3gtc2hhZG93OiAycHggMnB4IDhweCAwcHggcmdiYSgwLCAwLCAwLCAwLjIpO1xuICAgIHBvc2l0aW9uOiBhYnNvbHV0ZTtcbiAgICB3aWR0aDogMTVweDtcbiAgICBoZWlnaHQ6IDEwMCU7XG4gICAgY3Vyc29yOiBjb2wtcmVzaXplO1xuICAgIGJvcmRlcjogMXB4IHNvbGlkIGdyZXk7XG4gICAgcG9zaXRpb246IHJlbGF0aXZlO1xuICAgIGJhY2tncm91bmQtY29sb3I6IHN0ZWVsYmx1ZTtcbiAgICB0b3VjaC1hY3Rpb246IG5vbmU7XG4gIH1cbiAgLm51bWJlciB7XG4gICAgcG9zaXRpb246IGFic29sdXRlO1xuICAgIHRvcDogNTBweDtcbiAgICB1c2VyLXNlbGVjdDogbm9uZTtcbiAgfVxuPC9zdHlsZT5cblxuPCEtLSA8ZGl2Pnt2YWx1ZX08L2Rpdj5cbjxkaXY+e3BlcmNlbnR9PC9kaXY+IC0tPlxuPGRpdiBjbGFzcz1cImNvbnRhaW5lclwiIG9uOnBvaW50ZXJkb3duPXtzdGFydENsaWNrfSBvbjprZXlkb3duPXtoYW5kbGVLZXlkb3dufT5cbiAgPGRpdiBjbGFzcz1cImJhY2tncm91bmRcIiAvPlxuICA8ZGl2IGNsYXNzPVwiaGFuZGxlXCIgc3R5bGU9XCJsZWZ0OntwZXJjZW50fSU7XCIgb246cG9pbnRlcmRvd249e3N0YXJ0Q2xpY2t9PlxuICAgIDxkaXYgY2xhc3M9XCJudW1iZXJcIj57TWF0aC5yb3VuZCh2YWx1ZSl9PC9kaXY+XG4gIDwvZGl2PlxuPC9kaXY+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBNkJFLFVBQVUsY0FBQyxDQUFDLEFBQ1YsUUFBUSxDQUFFLFFBQVEsQ0FDbEIsTUFBTSxDQUFFLElBQUksQ0FDWixLQUFLLENBQUUsSUFBSSxDQUNYLE1BQU0sQ0FBRSxPQUFPLENBQ2YsT0FBTyxDQUFFLElBQUksQUFDZixDQUFDLEFBQ0QsV0FBVyxjQUFDLENBQUMsQUFDWCxRQUFRLENBQUUsUUFBUSxDQUNsQixnQkFBZ0IsQ0FBRSxTQUFTLENBQzNCLGFBQWEsQ0FBRSxHQUFHLENBQ2xCLFVBQVUsQ0FBRSxHQUFHLENBQUMsR0FBRyxDQUFDLEdBQUcsQ0FBQyxHQUFHLENBQUMsS0FBSyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxHQUFHLENBQUMsQ0FDOUMsR0FBRyxDQUFFLEdBQUcsQ0FDUixNQUFNLENBQUUsR0FBRyxDQUNYLEtBQUssQ0FBRSxJQUFJLENBQ1gsWUFBWSxDQUFFLElBQUksQ0FDbEIsYUFBYSxDQUFFLElBQUksQUFDckIsQ0FBQyxBQUNELE9BQU8sY0FBQyxDQUFDLEFBQ1AsUUFBUSxDQUFFLFFBQVEsQ0FDbEIsYUFBYSxDQUFFLEdBQUcsQ0FDbEIsVUFBVSxDQUFFLEdBQUcsQ0FBQyxHQUFHLENBQUMsR0FBRyxDQUFDLEdBQUcsQ0FBQyxLQUFLLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLENBQUMsQ0FBQyxDQUFDLEdBQUcsQ0FBQyxDQUM5QyxRQUFRLENBQUUsUUFBUSxDQUNsQixLQUFLLENBQUUsSUFBSSxDQUNYLE1BQU0sQ0FBRSxJQUFJLENBQ1osTUFBTSxDQUFFLFVBQVUsQ0FDbEIsTUFBTSxDQUFFLEdBQUcsQ0FBQyxLQUFLLENBQUMsSUFBSSxDQUN0QixRQUFRLENBQUUsUUFBUSxDQUNsQixnQkFBZ0IsQ0FBRSxTQUFTLENBQzNCLFlBQVksQ0FBRSxJQUFJLEFBQ3BCLENBQUMsQUFDRCxPQUFPLGNBQUMsQ0FBQyxBQUNQLFFBQVEsQ0FBRSxRQUFRLENBQ2xCLEdBQUcsQ0FBRSxJQUFJLENBQ1QsV0FBVyxDQUFFLElBQUksQUFDbkIsQ0FBQyJ9 */";
+    	append_dev(document.head, style);
+    }
+
+    function create_fragment$2(ctx) {
+    	let div3;
+    	let div0;
+    	let t0;
+    	let div2;
+    	let div1;
+    	let t1_value = Math.round(/*value*/ ctx[0]) + "";
+    	let t1;
+    	let mounted;
+    	let dispose;
+
+    	const block = {
+    		c: function create() {
+    			div3 = element("div");
+    			div0 = element("div");
+    			t0 = space();
+    			div2 = element("div");
+    			div1 = element("div");
+    			t1 = text(t1_value);
+    			attr_dev(div0, "class", "background svelte-sjpf61");
+    			add_location(div0, file$1, 70, 2, 1574);
+    			attr_dev(div1, "class", "number svelte-sjpf61");
+    			add_location(div1, file$1, 72, 4, 1681);
+    			attr_dev(div2, "class", "handle svelte-sjpf61");
+    			set_style(div2, "left", /*percent*/ ctx[1] + "%");
+    			add_location(div2, file$1, 71, 2, 1603);
+    			attr_dev(div3, "class", "container svelte-sjpf61");
+    			add_location(div3, file$1, 69, 0, 1493);
+    		},
+    		l: function claim(nodes) {
+    			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, div3, anchor);
+    			append_dev(div3, div0);
+    			append_dev(div3, t0);
+    			append_dev(div3, div2);
+    			append_dev(div2, div1);
+    			append_dev(div1, t1);
+
+    			if (!mounted) {
+    				dispose = [
+    					listen_dev(div2, "pointerdown", /*startClick*/ ctx[2], false, false, false),
+    					listen_dev(div3, "pointerdown", /*startClick*/ ctx[2], false, false, false),
+    					listen_dev(div3, "keydown", /*handleKeydown*/ ctx[3], false, false, false)
+    				];
+
+    				mounted = true;
+    			}
+    		},
+    		p: function update(ctx, [dirty]) {
+    			if (dirty & /*value*/ 1 && t1_value !== (t1_value = Math.round(/*value*/ ctx[0]) + "")) set_data_dev(t1, t1_value);
+
+    			if (dirty & /*percent*/ 2) {
+    				set_style(div2, "left", /*percent*/ ctx[1] + "%");
+    			}
+    		},
+    		i: noop,
+    		o: noop,
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(div3);
+    			mounted = false;
+    			run_all(dispose);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_fragment$2.name,
+    		type: "component",
+    		source: "",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    function instance$2($$self, $$props, $$invalidate) {
+    	let { value = 0 } = $$props;
+    	let { max = 100 } = $$props;
+    	let { min = 0 } = $$props;
+    	let scale = scaleLinear({ world: [0, 100], minmax: [min, max] });
+    	let percent = scale(value);
+
+    	function startClick(e) {
+    		dragHandler(e, res => {
+    			$$invalidate(1, percent = res.percent.x * 100);
+    			$$invalidate(0, value = scale.backward(percent));
+    		});
+    	}
+
+    	function handleKeydown(event) {
+    		if (event.key === "ArrowLeft") {
+    			$$invalidate(1, percent -= 1);
+    			$$invalidate(0, value = scale.backward(percent));
+    		}
+
+    		if (event.key === "ArrowRight") {
+    			$$invalidate(1, percent += 1);
+    			$$invalidate(0, value = scale.backward(percent));
+    		}
+
+    		event.preventDefault();
+    	}
+
+    	const writable_props = ["value", "max", "min"];
+
+    	Object.keys($$props).forEach(key => {
+    		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== "$$") console.warn(`<Horizontal> was created with unknown prop '${key}'`);
+    	});
+
+    	let { $$slots = {}, $$scope } = $$props;
+    	validate_slots("Horizontal", $$slots, []);
+
+    	$$self.$$set = $$props => {
+    		if ("value" in $$props) $$invalidate(0, value = $$props.value);
+    		if ("max" in $$props) $$invalidate(4, max = $$props.max);
+    		if ("min" in $$props) $$invalidate(5, min = $$props.min);
+    	};
+
+    	$$self.$capture_state = () => ({
+    		scaleLinear,
+    		onFirstClick: dragHandler,
+    		value,
+    		max,
+    		min,
+    		scale,
+    		percent,
+    		startClick,
+    		handleKeydown
+    	});
+
+    	$$self.$inject_state = $$props => {
+    		if ("value" in $$props) $$invalidate(0, value = $$props.value);
+    		if ("max" in $$props) $$invalidate(4, max = $$props.max);
+    		if ("min" in $$props) $$invalidate(5, min = $$props.min);
+    		if ("scale" in $$props) scale = $$props.scale;
+    		if ("percent" in $$props) $$invalidate(1, percent = $$props.percent);
+    	};
+
+    	if ($$props && "$$inject" in $$props) {
+    		$$self.$inject_state($$props.$$inject);
+    	}
+
+    	return [value, percent, startClick, handleKeydown, max, min];
+    }
+
+    class Horizontal extends SvelteComponentDev {
+    	constructor(options) {
+    		super(options);
+    		if (!document.getElementById("svelte-sjpf61-style")) add_css$1();
+    		init(this, options, instance$2, create_fragment$2, safe_not_equal, { value: 0, max: 4, min: 5 });
+
+    		dispatch_dev("SvelteRegisterComponent", {
+    			component: this,
+    			tagName: "Horizontal",
+    			options,
+    			id: create_fragment$2.name
+    		});
+    	}
+
+    	get value() {
+    		throw new Error("<Horizontal>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	set value(value) {
+    		throw new Error("<Horizontal>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	get max() {
+    		throw new Error("<Horizontal>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	set max(value) {
+    		throw new Error("<Horizontal>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	get min() {
+    		throw new Error("<Horizontal>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	set min(value) {
+    		throw new Error("<Horizontal>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+    }
+
+    var spencerColor$1 = createCommonjsModule(function (module, exports) {
+    !function(e){module.exports=e();}(function(){return function u(i,a,c){function f(r,e){if(!a[r]){if(!i[r]){var o="function"==typeof commonjsRequire&&commonjsRequire;if(!e&&o)return o(r,!0);if(d)return d(r,!0);var n=new Error("Cannot find module '"+r+"'");throw n.code="MODULE_NOT_FOUND",n}var t=a[r]={exports:{}};i[r][0].call(t.exports,function(e){return f(i[r][1][e]||e)},t,t.exports,u,i,a,c);}return a[r].exports}for(var d="function"==typeof commonjsRequire&&commonjsRequire,e=0;e<c.length;e++)f(c[e]);return f}({1:[function(e,r,o){r.exports={blue:"#6699cc",green:"#6accb2",yellow:"#e1e6b3",red:"#cc7066",pink:"#F2C0BB",brown:"#705E5C",orange:"#cc8a66",purple:"#d8b3e6",navy:"#335799",olive:"#7f9c6c",fuscia:"#735873",beige:"#e6d7b3",slate:"#8C8C88",suede:"#9c896c",burnt:"#603a39",sea:"#50617A",sky:"#2D85A8",night:"#303b50",rouge:"#914045",grey:"#838B91",mud:"#C4ABAB",royal:"#275291",cherry:"#cc6966",tulip:"#e6b3bc",rose:"#D68881",fire:"#AB5850",greyblue:"#72697D",greygreen:"#8BA3A2",greypurple:"#978BA3",burn:"#6D5685",slategrey:"#bfb0b3",light:"#a3a5a5",lighter:"#d7d5d2",fudge:"#4d4d4d",lightgrey:"#949a9e",white:"#fbfbfb",dimgrey:"#606c74",softblack:"#463D4F",dark:"#443d3d",black:"#333333"};},{}],2:[function(e,r,o){var n=e("./colors"),t={juno:["blue","mud","navy","slate","pink","burn"],barrow:["rouge","red","orange","burnt","brown","greygreen"],roma:["#8a849a","#b5b0bf","rose","lighter","greygreen","mud"],palmer:["red","navy","olive","pink","suede","sky"],mark:["#848f9a","#9aa4ac","slate","#b0b8bf","mud","grey"],salmon:["sky","sea","fuscia","slate","mud","fudge"],dupont:["green","brown","orange","red","olive","blue"],bloor:["night","navy","beige","rouge","mud","grey"],yukon:["mud","slate","brown","sky","beige","red"],david:["blue","green","yellow","red","pink","light"],neste:["mud","cherry","royal","rouge","greygreen","greypurple"],ken:["red","sky","#c67a53","greygreen","#dfb59f","mud"]};Object.keys(t).forEach(function(e){t[e]=t[e].map(function(e){return n[e]||e});}),r.exports=t;},{"./colors":1}],3:[function(e,r,o){var n=e("./colors"),t=e("./combos"),u={colors:n,list:Object.keys(n).map(function(e){return n[e]}),combos:t};r.exports=u;},{"./colors":1,"./combos":2}]},{},[3])(3)});
+    });
+
+    //  latitude / longitude
+    //  (-90|90) /  (-180|180)
+    //
+    // places with more than 5m people
+    var cities = {
+      tokyo: [35.68972, 139.69222],
+      delhi: [28.61, 77.23],
+      shanghai: [31.22861, 121.47472],
+      'sao paulo': [-23.55, -46.63333],
+      'mexico city': [19.43333, -99.13333],
+      cairo: [30.03333, 31.23333],
+      mumbai: [18.975, 72.82583],
+      beijing: [39.9069, 116.3976],
+      dhaka: [23.76389, 90.38889],
+      osaka: [34.69389, 135.50222],
+      'new york city': [40.661, -73.944],
+      karachi: [24.86, 67.01],
+      'buenos aires': [-34.60333, -58.38167],
+      chongqing: [29.5637, 106.5504],
+      istanbul: [41.01361, 28.955],
+      kolkata: [22.5726, 88.3639],
+      manila: [14.58, 121],
+      lagos: [6.45503, 3.38408],
+      'rio de janeiro': [-22.90833, -43.19639],
+      tianjin: [39.1336, 117.2054],
+      kinshasa: [-4.325, 15.32222],
+      guangzhou: [23.132, 113.266],
+      'los angeles': [34.05, -118.25],
+      moscow: [55.75583, 37.61722],
+      shenzhen: [22.5415, 114.0596],
+      lahore: [31.54972, 74.34361],
+      bangalore: [12.98333, 77.58333],
+      paris: [48.85661, 2.35222],
+      bogotá: [4.71111, -74.07222],
+      jakarta: [-6.2, 106.81667],
+      chennai: [13.08333, 80.26667],
+      lima: [-12.05, -77.03333],
+      bangkok: [13.7525, 100.49417],
+      seoul: [37.56667, 126.96667],
+      nagoya: [35.18333, 136.9],
+      hyderabad: [17.37, 78.48],
+      london: [51.50722, -0.1275],
+      tehran: [35.68917, 51.38889],
+      chicago: [41.82192, -87.70304],
+      chengdu: [30.657, 104.066],
+      nanjing: [32.0614, 118.7636],
+      wuhan: [30.5934, 114.3046],
+      'ho chi minh city': [10.8, 106.65],
+      luanda: [-8.83833, 13.23444],
+      ahmedabad: [23.03, 72.58],
+      'kuala lumpur': [3.14778, 101.69528],
+      "xi'an": [34.265, 108.954],
+      'hong kong': [22.3, 114.2],
+      dongguan: [23.021, 113.752],
+      hangzhou: [30.267, 120.153],
+      foshan: [23.0214, 113.1216],
+      shenyang: [41.8047, 123.434],
+      riyadh: [24.63333, 46.71667],
+      baghdad: [33.33333, 44.38333],
+      santiago: [-33.45, -70.66667],
+      surat: [21.17024, 72.83106],
+      madrid: [40.38333, -3.71667],
+      suzhou: [31.2998, 120.5853],
+      pune: [18.52028, 73.85667],
+      harbin: [45.7576, 126.6409],
+      houston: [29.76278, -95.38306],
+      dallas: [32.77917, -96.80889],
+      toronto: [43.74167, -79.37333],
+      'dar es salaam': [-6.8, 39.28333],
+      miami: [25.77528, -80.20889],
+      'belo horizonte': [-19.91667, -43.93333],
+      singapore: [1.28333, 103.83333],
+      philadelphia: [39.95278, -75.16361],
+      atlanta: [33.755, -84.39],
+      fukuoka: [33.58333, 130.4],
+      khartoum: [15.50056, 32.56],
+      barcelona: [41.38333, 2.18333],
+      johannesburg: [-26.20444, 28.04556],
+      'saint petersburg': [59.9375, 30.30861],
+      qingdao: [36.0669, 120.3827],
+      dalian: [38.914, 121.6148],
+      'washington, d.c.': [38.90472, -77.01639],
+      yangon: [16.85, 96.18333],
+      alexandria: [31.2, 29.91667],
+      jinan: [36.6702, 117.0207],
+      guadalajara: [20.67667, -103.3475]
+    };
+
+    var ontario = {
+      brampton: [43.68333, -79.76667],
+      barrie: [44.37111, -79.67694],
+      belleville: [44.16667, -77.38333],
+      brantford: [43.16667, -80.25],
+      cornwall: [45.0275, -74.74],
+      brockville: [44.58333, -75.68333],
+      burlington: [43.31667, -79.8],
+      cambridge: [43.36667, -80.31667],
+      'clarence-rockland': [45.48333, -75.2],
+      guelph: [43.55, -80.25],
+      dryden: [49.78333, -92.83333],
+      'elliot lake': [46.38333, -82.65],
+      'greater sudbury': [46.49, -81.01],
+      'haldimand county': [42.93333, -79.88333],
+      hamilton: [43.25667, -79.86917],
+      kitchener: [43.41861, -80.47278],
+      kingston: [44.23333, -76.5],
+      kenora: [49.76667, -94.48333],
+      'kawartha lakes': [44.35, -78.75],
+      london: [42.98361, -81.24972],
+      mississauga: [43.6, -79.65],
+      markham: [43.87667, -79.26333],
+      'niagara falls': [43.06, -79.10667],
+      'norfolk county': [42.85, -80.26667],
+      ottawa: [45.42472, -75.695],
+      'north bay': [46.3, -79.45],
+      orillia: [44.6, -79.41667],
+      oshawa: [43.9, -78.85],
+      'owen sound': [44.56667, -80.93333],
+      pickering: [43.83944, -79.08139],
+      peterborough: [44.3, -78.31667],
+      'port colborne': [42.88333, -79.25],
+      pembroke: [45.81667, -77.1],
+      sarnia: [42.99944, -82.30889],
+      'st. catharines': [43.18333, -79.23333],
+      'richmond hill': [43.86667, -79.43333],
+      'quinte west': [44.18333, -77.56667],
+      'sault ste. marie': [46.53333, -84.35],
+      'thunder bay': [48.38222, -89.24611],
+      stratford: [43.37083, -80.98194],
+      'st. thomas': [42.775, -81.18333],
+      thorold: [43.11667, -79.2],
+      'temiskaming shores': [47.51667, -79.68333],
+      toronto: [43.74167, -79.37333],
+      waterloo: [43.46667, -80.51667],
+      timmins: [48.46667, -81.33333],
+      vaughan: [43.83333, -79.5],
+      welland: [42.98333, -79.23333],
+      windsor: [42.28333, -83],
+      woodstock: [43.13056, -80.74667]
+    };
+
+    var northAmerica = {
+      'mexico city': [19.43333, -99.13333],
+      'new york city': [40.661, -73.944],
+      'los angeles': [34.05, -118.25],
+      toronto: [43.74167, -79.37333],
+      chicago: [41.82192, -87.70304],
+      houston: [29.76278, -95.38306],
+      havana: [23.13667, -82.35889],
+      montreal: [45.50889, -73.56167],
+      'ecatepec de morelos': [19.60972, -99.06],
+      philadelphia: [39.95278, -75.16361],
+      'san antonio': [29.425, -98.49389],
+      guadalajara: [20.67667, -103.3475],
+      puebla: [19, -97.88333],
+      'san diego': [32.715, -117.1625],
+      dallas: [32.77917, -96.80889],
+      tijuana: [32.525, -117.03333],
+      calgary: [51.05, -114.06667],
+      tegucigalpa: [14.1, -87.21667],
+      zapopan: [20.72028, -103.39194],
+      monterrey: [25.66667, -100.3],
+      managua: [12.13639, -86.25139],
+      'santo domingo': [18.46667, -69.95],
+      'guatemala city': [14.61333, -90.53528],
+      'port-au-prince': [18.53333, -72.33333],
+      naucalpan: [19.47528, -99.23778],
+      ottawa: [45.42472, -75.695],
+      austin: [30.26722, -97.74306],
+      edmonton: [53.53444, -113.49028],
+      querétaro: [20.58333, -100.38333],
+      toluca: [19.2925, -99.65694],
+      jacksonville: [30.33694, -81.66139],
+      'san francisco': [37.7775, -122.41639],
+      indianapolis: [39.76861, -86.15806],
+      'fort worth': [32.75, -97.33333],
+      charlotte: [35.22722, -80.84306],
+      hermosillo: [29.09889, -110.95417],
+      saltillo: [25.43333, -101],
+      aguascalientes: [22.01667, -102.35],
+      mississauga: [43.6, -79.65],
+      'san luis potosí': [22.6, -100.43333],
+      veracruz: [19.43333, -96.38333],
+      'san pedro sula': [15.5, -88.03333],
+      'santiago de los caballeros': [19.45726, -70.6888],
+      culiacán: [24.80694, -107.39389],
+      winnipeg: [49.88444, -97.14639],
+      mexicali: [32.66333, -115.46778],
+      cancún: [21.16056, -86.8475],
+      acapulco: [16.86361, -99.8825],
+      tlalnepantla: [19.53667, -99.19472],
+      seattle: [47.60972, -122.33306],
+      denver: [39.73917, -104.99028],
+      'el paso': [31.75917, -106.48861],
+      chimalhuacán: [19.4375, -98.95417],
+      detroit: [42.33139, -83.04583],
+      'washington, d.c.': [38.90472, -77.01639],
+      boston: [42.35806, -71.06361],
+      tlaquepaque: [20.61667, -103.31667],
+      nashville: [36.16667, -86.78333],
+      torreón: [25.53944, -103.44861],
+      vancouver: [49.25, -123.1],
+      reynosa: [26.09222, -98.27778],
+      'oklahoma city': [35.46861, -97.52139],
+      'las vegas': [36.175, -115.13639],
+      baltimore: [39.28333, -76.61667],
+      brampton: [43.68333, -79.76667],
+      louisville: [38.22533, -85.74167],
+      morelia: [19.76833, -101.18944],
+      milwaukee: [43.05, -87.95],
+      'tuxtla gutiérrez': [16.75278, -93.11667],
+      apodaca: [25.78333, -100.18333],
+      durango: [24.93333, -104.91667],
+      albuquerque: [35.11083, -106.61],
+      'quebec city': [46.81389, -71.20806],
+      tucson: [32.22167, -110.92639],
+      'cuautitlán izcalli': [19.64611, -99.21139],
+      surrey: [51.25, -0.41667],
+      'ciudad lópez mateos': [19.56111, -99.24694],
+      tultitlán: [19.645, -99.16944],
+      fresno: [36.75, -119.76667]
+    };
+
+    const points = [
+      ['afghanistan', 'kabul', 34.28, 69.11],
+      ['albania', 'tirane', 41.18, 19.49],
+      ['algeria', 'algiers', 36.42, 3.08],
+      ['american samoa', 'pago pago', -14.16, -170.43],
+      ['andorra', 'andorra la vella', 42.31, 1.32],
+      ['angola', 'luanda', -8.5, 13.15],
+      ['antigua and barbuda', 'west indies', 17.2, -61.48],
+      ['argentina', 'buenos aires', -36.3, -60.0],
+      ['armenia', 'yerevan', 40.1, 44.31],
+      ['aruba', 'oranjestad', 12.32, -70.02],
+      ['australia', 'canberra', -35.15, 149.08],
+      ['austria', 'vienna', 48.12, 16.22],
+      ['azerbaijan', 'baku', 40.29, 49.56],
+      ['bahamas', 'nassau', 25.05, -77.2],
+      ['bahrain', 'manama', 26.1, 50.3],
+      ['bangladesh', 'dhaka', 23.43, 90.26],
+      ['barbados', 'bridgetown', 13.05, -59.3],
+      ['belarus', 'minsk', 53.52, 27.3],
+      ['belgium', 'brussels', 50.51, 4.21],
+      ['belize', 'belmopan', 17.18, -88.3],
+      ['benin', 'porto novo', 6.23, 2.42],
+      ['bhutan', 'thimphu', 27.31, 89.45],
+      ['bolivia', 'la paz', -16.2, -68.1],
+      ['bosnia and herzegovina', 'sarajevo', 43.52, 18.26],
+      ['botswana', 'gaborone', -24.45, 25.57],
+      ['brazil', 'brasilia', -15.47, -47.55],
+      ['british virgin islands', 'road town', 18.27, -64.37],
+      ['brunei darussalam', 'bandar seri begawan', 4.52, 115.0],
+      ['bulgaria', 'sofia', 42.45, 23.2],
+      ['burkina faso', 'ouagadougou', 12.15, -1.3],
+      ['burundi', 'bujumbura', -3.16, 29.18],
+      ['cambodia', 'phnom penh', 11.33, 104.55],
+      ['cameroon', 'yaounde', 3.5, 11.35],
+      ['canada', 'ottawa', 45.27, -75.42],
+      ['cape verde', 'praia', 15.02, -23.34],
+      ['cayman islands', 'george town', 19.2, -81.24],
+      ['central african republic', 'bangui', 4.23, 18.35],
+      ['chad', "n'djamena", 12.1, 14.59],
+      ['chile', 'santiago', -33.24, -70.4],
+      ['china', 'beijing', 39.55, 116.2],
+      ['colombia', 'bogota', 4.34, -74.0],
+      ['comros', 'moroni', -11.4, 43.16],
+      ['congo', 'brazzaville', -4.09, 15.12],
+      ['costa rica', 'san jose', 9.55, -84.02],
+      ["cote d'ivoire", 'yamoussoukro', 6.49, -5.17],
+      ['croatia', 'zagreb', 45.5, 15.58],
+      ['cuba', 'havana', 23.08, -82.22],
+      ['cyprus', 'nicosia', 35.1, 33.25],
+      ['czech republic', 'prague', 50.05, 14.22],
+      ['democratic republic of the congo', 'kinshasa', -4.2, 15.15],
+      ['denmark', 'copenhagen', 55.41, 12.34],
+      ['djibouti', 'djibouti', 11.08, 42.2],
+      ['dominica', 'roseau', 15.2, -61.24],
+      ['dominica republic', 'santo domingo', 18.3, -69.59],
+      ['east timor', 'dili', -8.29, 125.34],
+      ['ecuador', 'quito', -0.15, -78.35],
+      ['egypt', 'cairo', 30.01, 31.14],
+      ['el salvador', 'san salvador', 13.4, -89.1],
+      ['equatorial guinea', 'malabo', 3.45, 8.5],
+      ['eritrea', 'asmara', 15.19, 38.55],
+      ['estonia', 'tallinn', 59.22, 24.48],
+      ['ethiopia', 'addis ababa', 9.02, 38.42],
+      ['falkland islands', 'stanley', -51.4, -59.51],
+      ['faroe islands', 'torshavn', 62.05, -6.56],
+      ['fiji', 'suva', -18.06, 178.3],
+      ['finland', 'helsinki', 60.15, 25.03],
+      ['france', 'paris', 48.5, 2.2],
+      ['french guiana', 'cayenne', 5.05, -52.18],
+      ['french polynesia', 'papeete', -17.32, -149.34],
+      ['gabon', 'libreville', 0.25, 9.26],
+      ['gambia', 'banjul', 13.28, -16.4],
+      ['georgia', 'tbilisi', 41.43, 44.5],
+      ['germany', 'berlin', 52.3, 13.25],
+      ['ghana', 'accra', 5.35, -0.06],
+      ['greece', 'athens', 37.58, 23.46],
+      ['greenland', 'nuuk', 64.1, -51.35],
+      ['guadeloupe', 'basse-terre', 16.0, -61.44],
+      ['guatemala', 'guatemala', 14.4, -90.22],
+      ['guernsey', 'st. peter port', 49.26, -2.33],
+      ['guinea', 'conakry', 9.29, -13.49],
+      ['guinea-bissau', 'bissau', 11.45, -15.45],
+      ['guyana', 'georgetown', 6.5, -58.12],
+      ['haiti', 'port-au-prince', 18.4, -72.2],
+      ['honduras', 'tegucigalpa', 14.05, -87.14],
+      ['hungary', 'budapest', 47.29, 19.05],
+      ['iceland', 'reykjavik', 64.1, -21.57],
+      ['india', 'new delhi', 28.37, 77.13],
+      ['indonesia', 'jakarta', -6.09, 106.49],
+      ['iran', 'tehran', 35.44, 51.3],
+      ['iraq', 'baghdad', 33.2, 44.3],
+      ['ireland', 'dublin', 53.21, -6.15],
+      ['israel', 'jerusalem', 31.71, -35.1],
+      ['italy', 'rome', 41.54, 12.29],
+      ['jamaica', 'kingston', 18.0, -76.5],
+      ['jordan', 'amman', 31.57, 35.52],
+      ['kazakhstan', 'astana', 51.1, 71.3],
+      ['kenya', 'nairobi', -1.17, 36.48],
+      ['kiribati', 'tarawa', 1.3, 173.0],
+      ['kuwait', 'kuwait', 29.3, 48.0],
+      ['kyrgyzstan', 'bishkek', 42.54, 74.46],
+      ['laos', 'vientiane', 17.58, 102.36],
+      ['latvia', 'riga', 56.53, 24.08],
+      ['lebanon', 'beirut', 33.53, 35.31],
+      ['lesotho', 'maseru', -29.18, 27.3],
+      ['liberia', 'monrovia', 6.18, -10.47],
+      ['libyan arab jamahiriya', 'tripoli', 32.49, 13.07],
+      ['liechtenstein', 'vaduz', 47.08, 9.31],
+      ['lithuania', 'vilnius', 54.38, 25.19],
+      ['luxembourg', 'luxembourg', 49.37, 6.09],
+      ['macao, china', 'macau', 22.12, 113.33],
+      ['madagascar', 'antananarivo', -18.55, 47.31],
+      ['macedonia', 'skopje', 42.01, 21.26],
+      ['malawi', 'lilongwe', -14.0, 33.48],
+      ['malaysia', 'kuala lumpur', 3.09, 101.41],
+      ['maldives', 'male', 4.0, 73.28],
+      ['mali', 'bamako', 12.34, -7.55],
+      ['malta', 'valletta', 35.54, 14.31],
+      ['martinique', 'fort-de-france', 14.36, -61.02],
+      ['mauritania', 'nouakchott', -20.1, 57.3],
+      ['mayotte', 'mamoudzou', -12.48, 45.14],
+      ['mexico', 'mexico', 19.2, -99.1],
+      ['micronesia', 'palikir', 6.55, 158.09],
+      ['moldova, republic of', 'chisinau', 47.02, 28.5],
+      ['mozambique', 'maputo', -25.58, 32.32],
+      ['myanmar', 'yangon', 16.45, 96.2],
+      ['namibia', 'windhoek', -22.35, 17.04],
+      ['nepal', 'kathmandu', 27.45, 85.2],
+      ['netherlands', 'amsterdam', 52.23, 4.54],
+      ['netherlands antilles', 'willemstad', 12.05, -69.0],
+      ['new caledonia', 'noumea', -22.17, 166.3],
+      ['new zealand', 'wellington', -41.19, 174.46],
+      ['nicaragua', 'managua', 12.06, -86.2],
+      ['niger', 'niamey', 13.27, 2.06],
+      ['nigeria', 'abuja', 9.05, 7.32],
+      ['norfolk island', 'kingston', -45.2, 168.43],
+      ['north korea', 'pyongyang', 39.09, 125.3],
+      ['northern mariana islands', 'saipan', 15.12, 145.45],
+      ['norway', 'oslo', 59.55, 10.45],
+      ['oman', 'masqat', 23.37, 58.36],
+      ['pakistan', 'islamabad', 33.4, 73.1],
+      ['palau', 'koror', 7.2, 134.28],
+      ['panama', 'panama', 9.0, -79.25],
+      ['papua new guinea', 'port moresby', -9.24, 147.08],
+      ['paraguay', 'asuncion', -25.1, -57.3],
+      ['peru', 'lima', -12.0, -77.0],
+      ['philippines', 'manila', 14.4, 121.03],
+      ['poland', 'warsaw', 52.13, 21.0],
+      ['portugal', 'lisbon', 38.42, -9.1],
+      ['puerto rico', 'san juan', 18.28, -66.07],
+      ['qatar', 'doha', 25.15, 51.35],
+      ['republic of korea', 'seoul', 37.31, 126.58],
+      ['romania', 'bucuresti', 44.27, 26.1],
+      ['russia', 'moscow', 55.45, 37.35],
+      ['rawanda', 'kigali', -1.59, 30.04],
+      ['saint kitts and nevis', 'basseterre', 17.17, -62.43],
+      ['saint lucia', 'castries', 14.02, -60.58],
+      ['saint pierre and miquelon', 'saint-pierre', 46.46, -56.12],
+      ['saint vincent and the greenadines', 'kingstown', 13.1, -61.1],
+      ['samoa', 'apia', -13.5, -171.5],
+      ['san marino', 'san marino', 43.55, 12.3],
+      ['sao tome and principe', 'sao tome', 0.1, 6.39],
+      ['saudi arabia', 'riyadh', 24.41, 46.42],
+      ['senegal', 'dakar', 14.34, -17.29],
+      ['sierra leone', 'freetown', 8.3, -13.17],
+      ['slovakia', 'bratislava', 48.1, 17.07],
+      ['slovenia', 'ljubljana', 46.04, 14.33],
+      ['solomon islands', 'honiara', -9.27, 159.57],
+      ['somalia', 'mogadishu', 2.02, 45.25],
+      ['south africa', 'pretoria', -25.44, 28.12],
+      ['spain', 'madrid', 40.25, -3.45],
+      ['sudan', 'khartoum', 15.31, 32.35],
+      ['suriname', 'paramaribo', 5.5, -55.1],
+      ['swaziland', 'mbabane', -26.18, 31.06],
+      ['sweden', 'stockholm', 59.2, 18.03],
+      ['switzerland', 'bern', 46.57, 7.28],
+      ['syria', 'damascus', 33.3, 36.18],
+      ['tajikistan', 'dushanbe', 38.33, 68.48],
+      ['thailand', 'bangkok', 13.45, 100.35],
+      ['togo', 'lome', 6.09, 1.2],
+      ['tonga', "nuku'alofa", -21.1, -174.0],
+      ['tunisia', 'tunis', 36.5, 10.11],
+      ['turkey', 'ankara', 39.57, 32.54],
+      ['turkmenistan', 'ashgabat', 38.0, 57.5],
+      ['tuvalu', 'funafuti', -8.31, 179.13],
+      ['uganda', 'kampala', 0.2, 32.3],
+      ['ukraine', 'kiev', 50.3, 30.28],
+      ['united arab emirates', 'abu dhabi', 24.28, 54.22],
+      ['united kingdom', 'london', 51.36, -0.05],
+      ['united republic of tanzania', 'dodoma', -6.08, 35.45],
+      ['united states of america', 'washington dc', 39.91, -77.02],
+      ['united states of virgin islands', 'charlotte amalie', 18.21, -64.56],
+      ['uruguay', 'montevideo', -34.5, -56.11],
+      ['uzbekistan', 'tashkent', 41.2, 69.1],
+      ['vanuatu', 'port-vila', -17.45, 168.18],
+      ['venezuela', 'caracas', 10.3, -66.55],
+      ['viet nam', 'hanoi', 21.05, 105.55],
+      ['yugoslavia', 'belgrade', 44.5, 20.37],
+      ['zambia', 'lusaka', -15.28, 28.16],
+      ['zimbabwe', 'harare', -17.43, 31.02]
+    ];
+
+    let obj = {};
+    points.forEach(a => {
+      obj[a[0]] = [a[2], a[3]];
+      obj[a[1]] = [a[2], a[3]];
+    });
+    var countries = obj;
+
+    var points$1 = Object.assign({}, cities, ontario, northAmerica, countries);
 
     /* Demo.svelte generated by Svelte v3.24.1 */
     const file$2 = "Demo.svelte";
 
-    function add_css$1() {
+    function add_css$2() {
     	var style = element("style");
-    	style.id = "svelte-1h9yarm-style";
-    	style.textContent = ".container.svelte-1h9yarm{height:800px}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiRGVtby5zdmVsdGUiLCJzb3VyY2VzIjpbIkRlbW8uc3ZlbHRlIl0sInNvdXJjZXNDb250ZW50IjpbIjxzY3JpcHQ+XG4gIGltcG9ydCB7IFNjYWxlLCBUaGluZyB9IGZyb20gJy4vc3JjJ1xuPC9zY3JpcHQ+XG5cbjxzdHlsZT5cbiAgLmNvbnRhaW5lciB7XG4gICAgLyogYm9yZGVyOiAxcHggc29saWQgZ3JleTsgKi9cbiAgICBoZWlnaHQ6IDgwMHB4O1xuICB9XG48L3N0eWxlPlxuXG48ZGl2IGNsYXNzPVwibWFpbiBtNFwiPlxuICA8aDI+c29tZWhvdy1zY2FsZTwvaDI+XG4gIDxkaXY+XG4gICAgYSBzdmVsdGUgaW5mb2dyYXBoaWMgY29tcG9uZW50IC1cbiAgICA8YSBocmVmPVwiaHR0cHM6Ly9naXRodWIuY29tL3NwZW5jZXJtb3VudGFpbi9zb21laG93LXNjYWxlXCIgY2xhc3M9XCJtNFwiPmdpdGh1YjwvYT5cbiAgPC9kaXY+XG4gIDxkaXYgY2xhc3M9XCJtdDQgY29udGFpbmVyXCI+XG4gICAgPFNjYWxlPlxuICAgICAgPFRoaW5nIGNvbG9yPVwiYmx1ZVwiIHZhbHVlPVwiMjAwXCIgbGFiZWw9XCJzbWFsbCBibHVlXCIgLz5cbiAgICAgIDxUaGluZyBjb2xvcj1cImJsdWVcIiB2YWx1ZT1cIjI1MDBcIiBsYWJlbD1cIm1lZGl1bSBibHVlXCIgLz5cbiAgICAgIDxUaGluZyBjb2xvcj1cImdyZWVuXCIgdmFsdWU9XCI1MDAwXCIgbGFiZWw9XCJiaWcgZ3JlZW5cIiAvPlxuICAgIDwvU2NhbGU+XG4gIDwvZGl2PlxuPC9kaXY+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBS0UsVUFBVSxlQUFDLENBQUMsQUFFVixNQUFNLENBQUUsS0FBSyxBQUNmLENBQUMifQ== */";
+    	style.id = "svelte-182y4ro-style";
+    	style.textContent = ".container.svelte-182y4ro{height:800px}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiRGVtby5zdmVsdGUiLCJzb3VyY2VzIjpbIkRlbW8uc3ZlbHRlIl0sInNvdXJjZXNDb250ZW50IjpbIjxzY3JpcHQ+XG4gIGltcG9ydCB7IFNjYWxlLCBUaGluZyB9IGZyb20gJy4vc3JjJ1xuICBpbXBvcnQgeyBIb3Jpem9udGFsIH0gZnJvbSAnL1VzZXJzL3NwZW5jZXIvbW91bnRhaW4vc29tZWhvdy1zbGlkZXIvc3JjL2luZGV4Lm1qcydcbiAgbGV0IGxlZnQgPSAxMjBcbiAgbGV0IHJpZ2h0ID0gNTBcbiAgbGV0IGhlaWdodCA9IDUwMFxuICBzZXRUaW1lb3V0KCgpID0+IHtcbiAgICBsZWZ0ID0gNzAwXG4gIH0sIDE1MDApXG4gIGxldCB2YWwgPSAzMDBcbjwvc2NyaXB0PlxuXG48c3R5bGU+XG4gIC5jb250YWluZXIge1xuICAgIGhlaWdodDogODAwcHg7XG4gIH1cbjwvc3R5bGU+XG5cbjxkaXYgY2xhc3M9XCJtYWluIG00XCI+XG4gIDxoMj5zb21laG93LXNjYWxlPC9oMj5cbiAgPGRpdj5cbiAgICBhIHN2ZWx0ZSBpbmZvZ3JhcGhpYyBjb21wb25lbnQgLVxuICAgIDxhIGhyZWY9XCJodHRwczovL2dpdGh1Yi5jb20vc3BlbmNlcm1vdW50YWluL3NvbWVob3ctc2NhbGVcIiBjbGFzcz1cIm00XCI+Z2l0aHViPC9hPlxuICA8L2Rpdj5cbiAgPGRpdiBjbGFzcz1cIm10NCBjb250YWluZXJcIj5cbiAgICA8SG9yaXpvbnRhbCBtaW49ezEwMH0gbWF4PXsxNzAwfSBiaW5kOnZhbHVlPXtyaWdodH0gLz5cbiAgICA8U2NhbGUgaGVpZ2h0PXt2YWx9PlxuICAgICAgPFRoaW5nIGNvbG9yPVwiYmx1ZVwiIGJpbmQ6dmFsdWU9e2xlZnR9IGxhYmVsPVwic21hbGwgYmx1ZVwiIC8+XG4gICAgICA8VGhpbmcgY29sb3I9XCJncmVlblwiIHZhbHVlPXtyaWdodH0gbGFiZWw9XCJtZWRpdW0gZ3JlZW5cIiAvPlxuICAgIDwvU2NhbGU+XG4gIDwvZGl2PlxuPC9kaXY+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBYUUsVUFBVSxlQUFDLENBQUMsQUFDVixNQUFNLENBQUUsS0FBSyxBQUNmLENBQUMifQ== */";
     	append_dev(document.head, style);
     }
 
-    // (19:4) <Scale>
+    // (27:4) <Scale height={val}>
     function create_default_slot(ctx) {
     	let thing0;
-    	let t0;
+    	let updating_value;
+    	let t;
     	let thing1;
-    	let t1;
-    	let thing2;
     	let current;
 
-    	thing0 = new Thing({
-    			props: {
-    				color: "blue",
-    				value: "200",
-    				label: "small blue"
-    			},
-    			$$inline: true
-    		});
+    	function thing0_value_binding(value) {
+    		/*thing0_value_binding*/ ctx[4].call(null, value);
+    	}
+
+    	let thing0_props = { color: "blue", label: "small blue" };
+
+    	if (/*left*/ ctx[0] !== void 0) {
+    		thing0_props.value = /*left*/ ctx[0];
+    	}
+
+    	thing0 = new Thing({ props: thing0_props, $$inline: true });
+    	binding_callbacks.push(() => bind(thing0, "value", thing0_value_binding));
 
     	thing1 = new Thing({
     			props: {
-    				color: "blue",
-    				value: "2500",
-    				label: "medium blue"
-    			},
-    			$$inline: true
-    		});
-
-    	thing2 = new Thing({
-    			props: {
     				color: "green",
-    				value: "5000",
-    				label: "big green"
+    				value: /*right*/ ctx[1],
+    				label: "medium green"
     			},
     			$$inline: true
     		});
@@ -1235,39 +2177,44 @@ var app = (function () {
     	const block = {
     		c: function create() {
     			create_component(thing0.$$.fragment);
-    			t0 = space();
+    			t = space();
     			create_component(thing1.$$.fragment);
-    			t1 = space();
-    			create_component(thing2.$$.fragment);
     		},
     		m: function mount(target, anchor) {
     			mount_component(thing0, target, anchor);
-    			insert_dev(target, t0, anchor);
+    			insert_dev(target, t, anchor);
     			mount_component(thing1, target, anchor);
-    			insert_dev(target, t1, anchor);
-    			mount_component(thing2, target, anchor);
     			current = true;
     		},
-    		p: noop,
+    		p: function update(ctx, dirty) {
+    			const thing0_changes = {};
+
+    			if (!updating_value && dirty & /*left*/ 1) {
+    				updating_value = true;
+    				thing0_changes.value = /*left*/ ctx[0];
+    				add_flush_callback(() => updating_value = false);
+    			}
+
+    			thing0.$set(thing0_changes);
+    			const thing1_changes = {};
+    			if (dirty & /*right*/ 2) thing1_changes.value = /*right*/ ctx[1];
+    			thing1.$set(thing1_changes);
+    		},
     		i: function intro(local) {
     			if (current) return;
     			transition_in(thing0.$$.fragment, local);
     			transition_in(thing1.$$.fragment, local);
-    			transition_in(thing2.$$.fragment, local);
     			current = true;
     		},
     		o: function outro(local) {
     			transition_out(thing0.$$.fragment, local);
     			transition_out(thing1.$$.fragment, local);
-    			transition_out(thing2.$$.fragment, local);
     			current = false;
     		},
     		d: function destroy(detaching) {
     			destroy_component(thing0, detaching);
-    			if (detaching) detach_dev(t0);
+    			if (detaching) detach_dev(t);
     			destroy_component(thing1, detaching);
-    			if (detaching) detach_dev(t1);
-    			destroy_component(thing2, detaching);
     		}
     	};
 
@@ -1275,14 +2222,14 @@ var app = (function () {
     		block,
     		id: create_default_slot.name,
     		type: "slot",
-    		source: "(19:4) <Scale>",
+    		source: "(27:4) <Scale height={val}>",
     		ctx
     	});
 
     	return block;
     }
 
-    function create_fragment$2(ctx) {
+    function create_fragment$3(ctx) {
     	let div2;
     	let h2;
     	let t1;
@@ -1291,11 +2238,28 @@ var app = (function () {
     	let a;
     	let t4;
     	let div1;
+    	let horizontal;
+    	let updating_value;
+    	let t5;
     	let scale;
     	let current;
 
+    	function horizontal_value_binding(value) {
+    		/*horizontal_value_binding*/ ctx[3].call(null, value);
+    	}
+
+    	let horizontal_props = { min: 100, max: 1700 };
+
+    	if (/*right*/ ctx[1] !== void 0) {
+    		horizontal_props.value = /*right*/ ctx[1];
+    	}
+
+    	horizontal = new Horizontal({ props: horizontal_props, $$inline: true });
+    	binding_callbacks.push(() => bind(horizontal, "value", horizontal_value_binding));
+
     	scale = new Scale({
     			props: {
+    				height: /*val*/ ctx[2],
     				$$slots: { default: [create_default_slot] },
     				$$scope: { ctx }
     			},
@@ -1314,16 +2278,18 @@ var app = (function () {
     			a.textContent = "github";
     			t4 = space();
     			div1 = element("div");
+    			create_component(horizontal.$$.fragment);
+    			t5 = space();
     			create_component(scale.$$.fragment);
-    			add_location(h2, file$2, 12, 2, 173);
+    			add_location(h2, file$2, 19, 2, 339);
     			attr_dev(a, "href", "https://github.com/spencermountain/somehow-scale");
     			attr_dev(a, "class", "m4");
-    			add_location(a, file$2, 15, 4, 245);
-    			add_location(div0, file$2, 13, 2, 198);
-    			attr_dev(div1, "class", "mt4 container svelte-1h9yarm");
-    			add_location(div1, file$2, 17, 2, 337);
+    			add_location(a, file$2, 22, 4, 411);
+    			add_location(div0, file$2, 20, 2, 364);
+    			attr_dev(div1, "class", "mt4 container svelte-182y4ro");
+    			add_location(div1, file$2, 24, 2, 503);
     			attr_dev(div2, "class", "main m4");
-    			add_location(div2, file$2, 11, 0, 149);
+    			add_location(div2, file$2, 18, 0, 315);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -1337,13 +2303,24 @@ var app = (function () {
     			append_dev(div0, a);
     			append_dev(div2, t4);
     			append_dev(div2, div1);
+    			mount_component(horizontal, div1, null);
+    			append_dev(div1, t5);
     			mount_component(scale, div1, null);
     			current = true;
     		},
     		p: function update(ctx, [dirty]) {
+    			const horizontal_changes = {};
+
+    			if (!updating_value && dirty & /*right*/ 2) {
+    				updating_value = true;
+    				horizontal_changes.value = /*right*/ ctx[1];
+    				add_flush_callback(() => updating_value = false);
+    			}
+
+    			horizontal.$set(horizontal_changes);
     			const scale_changes = {};
 
-    			if (dirty & /*$$scope*/ 1) {
+    			if (dirty & /*$$scope, right, left*/ 67) {
     				scale_changes.$$scope = { dirty, ctx };
     			}
 
@@ -1351,22 +2328,25 @@ var app = (function () {
     		},
     		i: function intro(local) {
     			if (current) return;
+    			transition_in(horizontal.$$.fragment, local);
     			transition_in(scale.$$.fragment, local);
     			current = true;
     		},
     		o: function outro(local) {
+    			transition_out(horizontal.$$.fragment, local);
     			transition_out(scale.$$.fragment, local);
     			current = false;
     		},
     		d: function destroy(detaching) {
     			if (detaching) detach_dev(div2);
+    			destroy_component(horizontal);
     			destroy_component(scale);
     		}
     	};
 
     	dispatch_dev("SvelteRegisterBlock", {
     		block,
-    		id: create_fragment$2.name,
+    		id: create_fragment$3.name,
     		type: "component",
     		source: "",
     		ctx
@@ -1375,7 +2355,19 @@ var app = (function () {
     	return block;
     }
 
-    function instance$2($$self, $$props, $$invalidate) {
+    function instance$3($$self, $$props, $$invalidate) {
+    	let left = 120;
+    	let right = 50;
+    	let height = 500;
+
+    	setTimeout(
+    		() => {
+    			$$invalidate(0, left = 700);
+    		},
+    		1500
+    	);
+
+    	let val = 300;
     	const writable_props = [];
 
     	Object.keys($$props).forEach(key => {
@@ -1384,21 +2376,52 @@ var app = (function () {
 
     	let { $$slots = {}, $$scope } = $$props;
     	validate_slots("Demo", $$slots, []);
-    	$$self.$capture_state = () => ({ Scale, Thing });
-    	return [];
+
+    	function horizontal_value_binding(value) {
+    		right = value;
+    		$$invalidate(1, right);
+    	}
+
+    	function thing0_value_binding(value) {
+    		left = value;
+    		$$invalidate(0, left);
+    	}
+
+    	$$self.$capture_state = () => ({
+    		Scale,
+    		Thing,
+    		Horizontal,
+    		left,
+    		right,
+    		height,
+    		val
+    	});
+
+    	$$self.$inject_state = $$props => {
+    		if ("left" in $$props) $$invalidate(0, left = $$props.left);
+    		if ("right" in $$props) $$invalidate(1, right = $$props.right);
+    		if ("height" in $$props) height = $$props.height;
+    		if ("val" in $$props) $$invalidate(2, val = $$props.val);
+    	};
+
+    	if ($$props && "$$inject" in $$props) {
+    		$$self.$inject_state($$props.$$inject);
+    	}
+
+    	return [left, right, val, horizontal_value_binding, thing0_value_binding];
     }
 
     class Demo extends SvelteComponentDev {
     	constructor(options) {
     		super(options);
-    		if (!document.getElementById("svelte-1h9yarm-style")) add_css$1();
-    		init(this, options, instance$2, create_fragment$2, safe_not_equal, {});
+    		if (!document.getElementById("svelte-182y4ro-style")) add_css$2();
+    		init(this, options, instance$3, create_fragment$3, safe_not_equal, {});
 
     		dispatch_dev("SvelteRegisterComponent", {
     			component: this,
     			tagName: "Demo",
     			options,
-    			id: create_fragment$2.name
+    			id: create_fragment$3.name
     		});
     	}
     }

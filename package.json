@@ -19,6 +19,7 @@
     "printWidth": 100
   },
   "dependencies": {
+    "@rollup/plugin-json": "^4.1.0",
     "fit-aspect-ratio": "^2.1.1",
     "spencer-color": "^0.1.0"
   },
